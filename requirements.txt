@@ -1,0 +1,6 @@
+# Workbook import (.ods / .xlsx)
+pandas
+odfpy
+openpyxl
+# Slack bot (optional)
+slack_bolt

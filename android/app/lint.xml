@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!-- aapt2 in AGP 8.7 still needs the -v26 qualifier for adaptive icons. -->
+    <issue id="ObsoleteSdkInt" severity="ignore" />
+    <!-- Cleartext is intentional: the server runs on the LAN over http. -->
+    <issue id="InsecureBaseConfiguration" severity="ignore" />
+    <!-- Versions are pinned deliberately. -->
+    <issue id="GradleDependency" severity="ignore" />
+    <issue id="AndroidGradlePluginVersion" severity="ignore" />
+</lint>

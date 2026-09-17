@@ -1,0 +1,14 @@
+{
+  "port": 8765,
+  "password": "",
+  "public_url": "",
+  "database": "data/inventory.db",
+  "source_workbook": "data/source.ods",
+  "research_dir": "../Spare Parts Research",
+  "sync": {
+    "remote_url": "https://YOUR-APP.up.railway.app",
+    "key": "SAME-AS-APP_PASSWORD-ON-RAILWAY",
+    "interval": 30
+  },
+  "slack": { "bot_token": "", "app_token": "", "alert_channel": "", "command": "/parts" }
+}

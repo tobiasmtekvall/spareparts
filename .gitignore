@@ -1,0 +1,15 @@
+# local data & secrets – never commit
+/config.json
+/data/
+.venv/
+start-log.txt
+*.db
+*.db-*
+__pycache__/
+# build output
+/apk/
+android/build/
+android/app/build/
+android/.gradle/
+android/.kotlin/
+android/local.properties

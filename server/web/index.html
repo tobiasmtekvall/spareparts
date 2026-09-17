@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Spare Parts</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23e8a33d'/><path d='M9 12h14v11a2 2 0 0 1-2 2H11a2 2 0 0 1-2-2zM7 8h18v4H7z' fill='%23161a20'/></svg>">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand"><span class="logo"></span><div><b>Spare Parts</b><small id="siteName">Jönköping</small></div></div>
+    <nav>
+      <a href="#/" data-view="parts" class="active"><i>▦</i>Inventory <kbd>1</kbd></a>
+      <a href="#/low" data-view="low"><i>△</i>Low stock <span class="badge" id="lowBadge"></span><kbd>2</kbd></a>
+      <a href="#/activity" data-view="activity"><i>↻</i>Activity <kbd>3</kbd></a>
+      <a href="#/labels" data-view="labels"><i>▣</i>QR labels <kbd>4</kbd></a>
+      <a href="#/settings" data-view="settings"><i>⚙</i>Settings <kbd>5</kbd></a>
+    </nav>
+    <div class="side-foot">
+      <div id="liveDot" class="live"><span></span><em>Connecting…</em></div>
+      <button id="syncState" class="sync" hidden><span></span><em></em></button>
+      <button class="ghost sm" id="themeBtn" title="Toggle theme (T)">◐ Theme</button>
+    </div>
+  </aside>
+
+  <main>
+    <header class="top">
+      <div class="search">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="q" placeholder="Search part no., model, name, location, spec…" autocomplete="off" spellcheck="false">
+        <kbd>/</kbd>
+      </div>
+      <button class="primary" id="addBtn">＋ New part</button>
+    </header>
+
+    <section id="view-parts" class="view">
+      <div class="stats" id="stats"></div>
+      <div class="filters">
+        <div class="chips" id="cats"></div>
+        <div class="filters-right">
+          <label class="toggle"><input type="checkbox" id="fLow"> Low only</label>
+          <label class="toggle"><input type="checkbox" id="fNoLoc"> No location</label>
+          <select id="sort">
+            <option value="pn">Sort: Part no.</option>
+            <option value="name">Sort: Name</option>
+            <option value="stock">Sort: Stock status</option>
+            <option value="price">Sort: Price</option>
+            <option value="location">Sort: Location</option>
+          </select>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="grid">
+          <thead><tr><th>Part no.</th><th>Description</th><th>Manufacturer / model</th><th>Location</th><th class="num">Price €</th><th class="num">Stock</th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+        <div class="empty" id="empty" hidden>No parts match.</div>
+      </div>
+      <div class="foot-note" id="count"></div>
+    </section>
+
+    <section id="view-low" class="view" hidden>
+      <h2>Below minimum stock</h2>
+      <p class="muted">Parts where the quantity on hand is under the minimum. The minimum defaults to the recommended spare quantity from the order.</p>
+      <div class="table-wrap"><table class="grid"><thead><tr><th>Part no.</th><th>Description</th><th>Location</th><th class="num">On hand</th><th class="num">Min</th><th class="num">Short</th><th class="num">Reorder €</th></tr></thead><tbody id="lowRows"></tbody></table></div>
+    </section>
+
+    <section id="view-activity" class="view" hidden>
+      <h2>Stock activity</h2>
+      <div class="timeline" id="activity"></div>
+    </section>
+
+    <section id="view-labels" class="view" hidden>
+      <h2>QR labels</h2>
+      <p class="muted">Pick parts and print. Each label carries a QR code that opens the part in the Android app or in any phone browser.</p>
+      <div class="label-tools">
+        <input id="labelQ" placeholder="Filter…">
+        <select id="labelCat"><option value="">All categories</option></select>
+        <select id="labelSize"><option value="m">Medium (63×38 mm)</option><option value="s">Small (48×25 mm)</option><option value="l">Large (99×57 mm)</option></select>
+        <button class="ghost" id="labelAll">Select all shown</button>
+        <button class="ghost" id="labelNone">Clear</button>
+        <button class="primary" id="labelPrint">Print <span id="labelCount">0</span> labels</button>
+      </div>
+      <div class="label-pick" id="labelPick"></div>
+    </section>
+
+    <section id="view-settings" class="view" hidden>
+      <h2>Settings</h2>
+      <div class="cards">
+        <div class="card">
+          <h3>You</h3>
+          <label>Your name (shown in activity)<input id="setUser" placeholder="e.g. Mousy"></label>
+          <div class="row-btns"><button class="primary" id="saveSettings">Save</button><a class="btn ghost" href="/logout">Sign out</a></div>
+        </div>
+        <div class="card">
+          <h3>Connect a phone</h3>
+          <p class="muted">In the Android app, open Settings and enter this address as the server URL and the site password as the API key.</p>
+          <div class="connect"><div id="connectQr"></div><code id="serverUrl"></code></div>
+        </div>
+        <div class="card">
+          <h3>Import / export</h3>
+          <p class="muted">Re-import an updated spare-part workbook (.ods or .xlsx). Stock counts, locations, minimums, notes and your own links are kept.</p>
+          <input type="file" id="importFile" accept=".ods,.xlsx,.xls">
+          <div class="row-btns">
+            <a class="btn ghost" href="/api/export.csv" id="expCsv">Export CSV</a>
+            <a class="btn ghost" href="/api/export.json" id="expJson">Export JSON</a>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Keyboard</h3>
+          <ul class="keys">
+            <li><kbd>/</kbd> search</li><li><kbd>↑</kbd><kbd>↓</kbd> move</li><li><kbd>Enter</kbd> open</li>
+            <li><kbd>+</kbd><kbd>−</kbd> adjust stock of open part</li><li><kbd>Esc</kbd> close</li><li><kbd>1</kbd>–<kbd>5</kbd> views</li><li><kbd>N</kbd> new part</li><li><kbd>T</kbd> theme</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <aside class="drawer" id="drawer" aria-hidden="true">
+    <div class="drawer-inner" id="detail"></div>
+  </aside>
+</div>
+
+<dialog id="dlg"><form method="dialog" id="dlgForm"></form></dialog>
+<div id="toast"></div>
+<div id="printArea"></div>
+<script src="/qrcode.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

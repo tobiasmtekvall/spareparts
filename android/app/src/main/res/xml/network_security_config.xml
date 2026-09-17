@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The inventory server runs on the local network over plain HTTP. -->
+<network-security-config>
+    <!-- Intentional: LAN servers are usually plain http://. -->
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
