@@ -1,0 +1,12 @@
+Mode: local copy synced with https://spareparts-production-7cb1.up.railway.app
+Syncing with the cloud …
+sync: manuals - uploading 1199, downloading 0 …
+sync: manuals 25/1199
+sync: upload failed for Mechanical/43-79347 - Timing-belt pully 30-8M-30/optibelt_metal_products.pdf: [WinError 10054] En befintlig anslutning tvingades att stänga av fjärrvärddatorn
+sync: manuals 50/1199
+sync: manuals 75/1199
+sync: manuals 100/1199
+sync: upload failed for Mechanical/S06100-3000 - Guiding profile/FORTNA_Shoe_Sorter_Datasheet.pdf: [WinError 10054] En befintlig anslutning tvingades att stänga av fjärrvärddatorn
+sync: upload failed for Mechanical/C11208-0384 - Roller ø50 shuttle shaft/FORTNA_Sortation_Solutions_Brochure.pdf: [WinError 10054] En befintlig anslutning tvingades att stänga av fjärrvärddatorn
+sync: upload failed for Mechanical/S06101 - Merge block 25° left/FORTNA_Sortation_Solutions_Brochure.pdf: [WinError 10054] En befintlig anslutning tvingades att stänga av fjärrvärddatorn
+sync: manuals 125/1199

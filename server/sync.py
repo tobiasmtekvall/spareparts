@@ -159,17 +159,21 @@ class Syncer:
             tmp = target.with_name(target.name + ".part")
             tmp.write_bytes(data); os.replace(tmp, target)
         def one(fn, p):
-            try:
-                fn(p)
-            except Exception as e:
-                self.log(f"sync: {fn.__name__} failed for {p}: {e}")
+            for attempt in range(3):
+                try:
+                    fn(p); break
+                except Exception as e:
+                    if attempt == 2:
+                        self.log(f"sync: {fn.__name__} failed for {p}: {e}")
+                    else:
+                        time.sleep(1.5 * (attempt + 1))
             with lock:
                 done[0] += 1
                 self.files_pending = max(0, len(up) + len(down) - done[0])
                 if done[0] % 25 == 0:
                     self.log(f"sync: manuals {done[0]}/{len(up) + len(down)}")
                     self._set_state(self.online, self.last_error)
-        with ThreadPoolExecutor(max_workers=5) as ex:
+        with ThreadPoolExecutor(max_workers=6) as ex:
             for p in up: ex.submit(one, upload, p)
             for p in down: ex.submit(one, download, p)
         self.files_pending = 0

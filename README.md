@@ -4,7 +4,7 @@ Everything shares one inventory:
 
 | Part | What it is |
 |---|---|
-| **Cloud app** (Railway) | The **primary copy**. Web app, API, Slack bot and manuals, reachable anywhere at `https://<name>.up.railway.app`. Protected by a shared password. |
+| **Cloud app** (Railway) | The **primary copy**, live at **https://spareparts-production-7cb1.up.railway.app** — web app, API, Slack bot and manuals, reachable anywhere. Protected by a shared password. |
 | **Local app** (site PC, `start.bat`) | A full copy that **syncs with the cloud**. It keeps working without internet and catches up when the connection is back. |
 | **Android app** (`android/`) | Scans QR codes, barcodes and label text, and books stock. It connects to the cloud address. |
 | **Slack bot** | `/parts …` in Slack. It runs in the cloud. |
@@ -33,7 +33,7 @@ Everything shares one inventory:
 5. Wait for the deploy to turn green. Opening the address shows the sign-in page.
    - The cloud starts empty. The first time the local app connects, it uploads the inventory, history and manuals.
 
-Every push to `main` on GitHub redeploys automatically. Your data stays on the volume.
+**Redeploying after a code change.** This service was created from the public repo URL, so Railway has no webhook on it and does **not** redeploy by itself. Either press **Deploy** (⋮ menu → Redeploy) on the service in Railway, or connect the repo properly: sign in to GitHub as `tobiasmtekvall`, open https://github.com/settings/installations → Railway App → Configure, add the `spareparts` repository, then in Railway open the service → Settings → Source and pick the repo. After that every push to `main` deploys automatically. Your data stays on the volume either way.
 
 ## 2. Local app (site PC)
 
