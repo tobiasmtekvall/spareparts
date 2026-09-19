@@ -13,3 +13,8 @@ android/app/build/
 android/.gradle/
 android/.kotlin/
 android/local.properties
+
+# runtime logs
+*.log
+sync-*.txt
+srv-*.txt
