@@ -393,7 +393,7 @@ function showSync(s) {
   const el = $("#syncState");
   if (!s || s.mode !== "replica") { el.hidden = true; return; }
   el.hidden = false;
-  const pend = s.pending ? ` · ${s.pending} to upload` : "";
+  const pend = (s.pending ? ` · ${s.pending} to upload` : "") + (s.files_pending ? ` · ${s.files_pending} files` : "");
   el.className = "sync " + (s.online && !s.error ? "ok" : "off");
   el.querySelector("em").textContent = s.online && !s.error ? `Synced with cloud${pend}` : (s.error || "Offline") + pend;
   el.title = `${s.remote}\nLast sync: ${s.last_sync ? new Date(s.last_sync * 1000).toLocaleString("sv-SE") : "never"}\nClick to sync now`;

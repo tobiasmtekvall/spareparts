@@ -5,6 +5,7 @@ Runs at start-up, right after every local change, whenever the cloud reports a c
 (live event stream), and every `interval` seconds as a safety net.
 """
 import json, os, ssl, threading, time, urllib.error, urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import quote
 
@@ -25,6 +26,7 @@ class Syncer:
         self.last_ok = None
         self.last_error = ""
         self.last_files = 0
+        self.files_pending = 0
         self.listeners = []
         self.ctx = ssl.create_default_context()
 
@@ -57,7 +59,7 @@ class Syncer:
     def status(self):
         return {"mode": "replica", "remote": self.remote, "online": self.online,
                 "last_sync": self.last_ok, "pending": self.store.outbox_count(),
-                "error": self.last_error}
+                "files_pending": self.files_pending, "error": self.last_error}
 
     def _set_state(self, online, error=""):
         changed = (online, error) != (self.online, self.last_error)
@@ -137,20 +139,41 @@ class Syncer:
         for f in self.files_dir.rglob("*"):
             if f.is_file() and not f.name.startswith((".", "~$")) and f.name != "desktop.ini":
                 local[f.relative_to(self.files_dir).as_posix()] = f.stat().st_size
-        up = [p for p in local if p not in remote]
+        up = [p for p in local if p not in remote and local[p] <= 100 * 1024 * 1024]
+        skipped = [p for p in local if p not in remote and local[p] > 100 * 1024 * 1024]
         down = [p for p in remote if p not in local]
-        for p in up:
-            if local[p] > 100 * 1024 * 1024:
-                self.log(f"sync: skipped {p} (over 100 MB)"); continue
-            self._req("POST", f"/api/files?path={quote(p)}", raw=(self.files_dir / p).read_bytes(), timeout=300)
-        for p in down:
-            data = self._req("GET", "/files/" + quote(p), timeout=300)
+        for p in skipped:
+            self.log(f"sync: skipped {p} (over 100 MB)")
+        self.files_pending = len(up) + len(down)
+        if not self.files_pending:
+            self.last_files = time.time(); return
+        self.log(f"sync: manuals - uploading {len(up)}, downloading {len(down)} …")
+        done = [0]
+        lock = threading.Lock()
+        def upload(p):
+            self._req("POST", f"/api/files?path={quote(p)}", raw=(self.files_dir / p).read_bytes(), timeout=600)
+        def download(p):
+            data = self._req("GET", "/files/" + quote(p), timeout=600)
             target = self.files_dir / p
             target.parent.mkdir(parents=True, exist_ok=True)
-            tmp = target.with_suffix(target.suffix + ".part")
+            tmp = target.with_name(target.name + ".part")
             tmp.write_bytes(data); os.replace(tmp, target)
-        if up or down:
-            self.log(f"sync: manuals – {len(up)} uploaded, {len(down)} downloaded")
+        def one(fn, p):
+            try:
+                fn(p)
+            except Exception as e:
+                self.log(f"sync: {fn.__name__} failed for {p}: {e}")
+            with lock:
+                done[0] += 1
+                self.files_pending = max(0, len(up) + len(down) - done[0])
+                if done[0] % 25 == 0:
+                    self.log(f"sync: manuals {done[0]}/{len(up) + len(down)}")
+                    self._set_state(self.online, self.last_error)
+        with ThreadPoolExecutor(max_workers=5) as ex:
+            for p in up: ex.submit(one, upload, p)
+            for p in down: ex.submit(one, download, p)
+        self.files_pending = 0
+        self.log(f"sync: manuals done ({len(up)} uploaded, {len(down)} downloaded)")
         self.last_files = time.time()
 
     def run_once(self, files=False):
