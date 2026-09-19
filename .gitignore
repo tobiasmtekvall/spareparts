@@ -18,3 +18,4 @@ android/local.properties
 *.log
 sync-*.txt
 srv-*.txt
+_to_delete/ 

@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parent.parent
 WEB = Path(__file__).resolve().parent / "web"
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from store import Store  # noqa: E402
+from sync import read_file, write_file, file_size  # path helpers (Windows long paths)
 
 try:  # Windows consoles may not be UTF-8
     sys.stdout.reconfigure(errors="replace"); sys.stderr.reconfigure(errors="replace")
@@ -111,14 +112,14 @@ def local_files(pn):
         for f in sorted(folder.rglob("*")):
             if f.is_file() and not f.name.endswith(".part"):
                 rel = f.relative_to(base).as_posix()
-                out.append({"title": f.name, "url": "/files/" + quote(rel), "size": f.stat().st_size})
+                out.append({"title": f.name, "url": "/files/" + quote(rel), "size": file_size(f)})
     return out
 
 def all_files():
     base = research_dir()
     if not base or not base.exists():
         return []
-    return [{"path": f.relative_to(base).as_posix(), "size": f.stat().st_size}
+    return [{"path": f.relative_to(base).as_posix(), "size": file_size(f)}
             for f in base.rglob("*") if f.is_file() and not f.name.endswith(".part")
             and not f.name.startswith((".", "~$")) and f.name != "desktop.ini"]
 
@@ -322,7 +323,7 @@ class Handler(BaseHTTPRequestHandler):
         f = safe_path(rel)
         if not f.is_file():
             return self._send(404, {"error": "not found"})
-        self._send(200, f.read_bytes(), mimetypes.guess_type(f.name)[0] or "application/octet-stream",
+        self._send(200, read_file(f), mimetypes.guess_type(f.name)[0] or "application/octet-stream",
                    {"Content-Disposition": f'inline; filename="{quote(f.name)}"'})
 
     def _events(self):
@@ -413,7 +414,7 @@ class Handler(BaseHTTPRequestHandler):
                 i = 1
                 while target.exists():
                     target = folder / f"{Path(name).stem} ({i}){Path(name).suffix}"; i += 1
-                target.write_bytes(self._body())
+                write_file(target, self._body())
                 STORE._bump({"type": "files", "pn": p["pn"]})
                 if SYNC: SYNC.poke_files()
                 return self._send(201, {"ok": True, "files": local_files(p["pn"])})
@@ -422,10 +423,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, all_files())
             if method == "POST":
                 if not research_dir(): raise ValueError("No file storage configured")
-                f = safe_path(one("path"))
-                f.parent.mkdir(parents=True, exist_ok=True)
-                tmp = f.with_name(f.name + ".part")
-                tmp.write_bytes(self._body()); os.replace(tmp, f)
+                write_file(safe_path(one("path")), self._body())
                 STORE._bump({"type": "files", "path": one("path")})
                 return self._send(201, {"ok": True})
         if seg == ["adjust"] and method == "POST":   # batch – Android offline queue and PC sync

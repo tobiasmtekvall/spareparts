@@ -9,6 +9,44 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import quote
 
+def _win_long(p):
+    """Windows cannot open paths whose folder name ends with a dot without the \\?\\ prefix."""
+    return Path("\\\\?\\" + os.path.abspath(str(p)))
+
+def read_file(p):
+    p = Path(p)
+    try:
+        return p.read_bytes()
+    except OSError:
+        if os.name == "nt":
+            return _win_long(p).read_bytes()
+        raise
+
+def write_file(p, data):
+    p = Path(p)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_name(p.name + ".part")
+        tmp.write_bytes(data)
+        os.replace(tmp, p)
+    except OSError:
+        if os.name != "nt":
+            raise
+        lp = _win_long(p)
+        lp.parent.mkdir(parents=True, exist_ok=True)
+        tmp = lp.with_name(lp.name + ".part")
+        tmp.write_bytes(data)
+        os.replace(tmp, lp)
+
+def file_size(p):
+    p = Path(p)
+    try:
+        return p.stat().st_size
+    except OSError:
+        if os.name == "nt":
+            return _win_long(p).stat().st_size
+        raise
+
 class RemoteError(Exception):
     pass
 
@@ -138,7 +176,7 @@ class Syncer:
         local = {}
         for f in self.files_dir.rglob("*"):
             if f.is_file() and not f.name.startswith((".", "~$")) and f.name != "desktop.ini":
-                local[f.relative_to(self.files_dir).as_posix()] = f.stat().st_size
+                local[f.relative_to(self.files_dir).as_posix()] = file_size(f)
         up = [p for p in local if p not in remote and local[p] <= 100 * 1024 * 1024]
         skipped = [p for p in local if p not in remote and local[p] > 100 * 1024 * 1024]
         down = [p for p in remote if p not in local]
@@ -151,13 +189,9 @@ class Syncer:
         done = [0]
         lock = threading.Lock()
         def upload(p):
-            self._req("POST", f"/api/files?path={quote(p)}", raw=(self.files_dir / p).read_bytes(), timeout=600)
+            self._req("POST", f"/api/files?path={quote(p)}", raw=read_file(self.files_dir / p), timeout=600)
         def download(p):
-            data = self._req("GET", "/files/" + quote(p), timeout=600)
-            target = self.files_dir / p
-            target.parent.mkdir(parents=True, exist_ok=True)
-            tmp = target.with_name(target.name + ".part")
-            tmp.write_bytes(data); os.replace(tmp, target)
+            write_file(self.files_dir / p, self._req("GET", "/files/" + quote(p), timeout=600))
         def one(fn, p):
             for attempt in range(3):
                 try:
