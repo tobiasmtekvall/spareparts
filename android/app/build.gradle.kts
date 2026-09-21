@@ -14,8 +14,8 @@ android {
         applicationId = "se.spareparts.inventory"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "2.0.0"
     }
 
     splits {
@@ -60,8 +60,14 @@ android {
     }
     testOptions {
         unitTests.all {
-            // Optional network smoke test: ./gradlew testDebugUnitTest -Pserver=http://localhost:8765
+            // Optional network smoke test: ./gradlew testDebugUnitTest -Pserver=http://localhost:9001
+            // It signs in first; override the account with -Puser=... -Ppass=... or the
+            // INVENTORY_USER / INVENTORY_PASSWORD environment variables.
             it.systemProperty("spareparts.server", (project.findProperty("server") ?: "").toString())
+            it.systemProperty("spareparts.user",
+                (project.findProperty("user") ?: System.getenv("INVENTORY_USER") ?: "admin").toString())
+            it.systemProperty("spareparts.pass",
+                (project.findProperty("pass") ?: System.getenv("INVENTORY_PASSWORD") ?: "Sorter-Admin-99").toString())
             it.testLogging { events("passed", "skipped", "failed"); showStandardStreams = true }
         }
     }
@@ -93,4 +99,5 @@ dependencies {
     debugImplementation(libs.compose.ui.tooling)
 
     testImplementation(libs.junit)
+    testImplementation(libs.okhttp.mockwebserver)
 }

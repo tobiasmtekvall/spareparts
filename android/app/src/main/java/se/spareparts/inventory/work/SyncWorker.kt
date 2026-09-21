@@ -16,7 +16,10 @@ import java.util.concurrent.TimeUnit
 class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
-        val repo = (applicationContext as SparePartsApp).container.repository
+        val container = (applicationContext as SparePartsApp).container
+        val repo = container.repository
+        // Signed out: the queue stays on disk and goes out after the next sign-in, which syncs.
+        if (!container.session.signedIn) return Result.success()
         val flushed = repo.flush()   // waits for the queue to be loaded from disk
         if (!flushed || repo.pending.value.isNotEmpty()) {
             return if (runAttemptCount < 20) Result.retry() else Result.failure()

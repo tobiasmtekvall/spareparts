@@ -28,7 +28,12 @@ class ApiException(val code: Int, message: String) : IOException(message)
 /** Server URL missing or malformed – not a connectivity problem. */
 class NotConfiguredException(message: String) : IOException(message)
 
-data class ServerConfig(val baseUrl: String, val apiKey: String, val user: String)
+/**
+ * Where to talk to and with which token. The token is the session token from `POST /api/login`
+ * or a shared device token; it goes in the `X-Api-Key` header. There is no `X-User` any more –
+ * the server knows who the token belongs to.
+ */
+data class ServerConfig(val baseUrl: String, val token: String = "")
 
 /**
  * Thin, dependency-light client for the inventory server's JSON API.
@@ -76,12 +81,12 @@ class ApiClient(
         return b.build()
     }
 
-    private suspend fun call(url: HttpUrl, method: String = "GET", body: JsonElement? = null): String =
+    private suspend fun call(url: HttpUrl, method: String = "GET", body: JsonElement? = null,
+                             auth: Boolean = true): String =
         withContext(Dispatchers.IO) {
             val cfg = config()
             val rb = Request.Builder().url(url).header("Accept", "application/json")
-            if (cfg.apiKey.isNotBlank()) rb.header("X-Api-Key", cfg.apiKey.trim())
-            if (cfg.user.isNotBlank()) rb.header("X-User", sanitizeHeader(cfg.user))
+            if (auth && cfg.token.isNotBlank()) rb.header("X-Api-Key", sanitizeHeader(cfg.token))
             val reqBody = body?.let { json.encodeToString(JsonElement.serializer(), it).toRequestBody(jsonType) }
             rb.method(method, reqBody)
             http.newCall(rb.build()).execute().use { resp ->
@@ -100,6 +105,33 @@ class ApiClient(
     private fun sanitizeHeader(s: String) = s.trim().filter { it in ' '..'~' || it in ' '..'ÿ' }
 
     suspend fun ping(): PingResponse = json.decodeFromString(call(url("api/ping")))
+
+    // ------------------------------------------------------------------ accounts
+
+    /**
+     * Signs in. Needs no token of its own; the token it returns is used for everything else.
+     * A wrong password, a disabled account or too many attempts come back as a 401 with a
+     * human-readable message in [ApiException.message].
+     */
+    suspend fun login(username: String, password: String): LoginResponse {
+        val body = buildJsonObject {
+            put("username", username.trim())
+            put("password", password)
+        }
+        return json.decodeFromString(call(url("api/login"), "POST", body, auth = false))
+    }
+
+    /** Who the current token belongs to, with the permissions the server will enforce. */
+    suspend fun me(): MeResponse = json.decodeFromString(call(url("api/me")))
+
+    /** Changes the signed-in person's own password. 403 when [current] is wrong. */
+    suspend fun changePassword(current: String, new: String) {
+        val body = buildJsonObject {
+            put("current", current)
+            put("new", new)
+        }
+        call(url("api/me"), "POST", body)
+    }
 
     suspend fun parts(since: Long?): PartsResponse {
         val q = if (since != null && since > 0) mapOf("since" to since.toString()) else emptyMap()

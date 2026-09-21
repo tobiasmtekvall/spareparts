@@ -119,11 +119,11 @@ You can also **@Spare Parts** in a channel or message the bot directly.
 
 ## 6. Android app
 
-- Install `SpareParts-arm64.apk`. To build it yourself, see `android/README.md`.
-- In the app's **Settings**, fill in:
-  - **Server URL:** the Railway address
-  - **API key:** a device token from Accounts → Device token
-  - **Your name**
+- Install `apk/SpareParts-arm64.apk` (version 2 or newer — it has sign-in). To build it yourself, see `android/README.md`.
+- **Signing in:** the app asks for the server address (the Railway one), a username and a password — the same account as the website. A temporary password is changed right there in the app.
+  - The app remembers the sign-in for 60 days. Signing out, an admin disabling the account or a password reset all end it at once.
+  - **A shared scanner phone** can use a device token instead: "Use a device token instead" on the sign-in screen, with a token from Accounts → Device token.
+- The app only shows what the role allows: read-only accounts get no stock buttons, staff can book stock and set location, notes and minimum.
 - **Scan** QR labels, manufacturer barcodes or DataMatrix codes, or tap **Read label** to read the text on a label.
 - Search and scanning still work offline, and stock changes are uploaded later.
 
@@ -146,7 +146,8 @@ Send a device token as the `X-Api-Key` header, or use the browser sign-in cookie
 | `GET /api/export.csv`, `/api/export.json`, `POST /api/import` | export / import |
 | `GET /api/events` | live event stream |
 | `GET /api/sync/status`, `POST /api/sync/now` | local app sync state |
-| `GET /api/me`, `POST /api/me` | who am I / change my own password |
+| `POST /api/login` | sign in (phone app): returns a token for `X-Api-Key` |
+| `GET /api/me`, `POST /api/me` | who am I / change my own password (returns a fresh token) |
 | `GET/POST /api/users`, `PATCH/DELETE /api/users/{id}` | accounts (admin) |
 | `POST /api/users/{id}/password`, `POST /api/users/{id}/token` | reset a password / issue a device token |
 | `GET /api/audit` | audit log (admin) |

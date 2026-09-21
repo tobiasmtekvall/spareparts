@@ -19,6 +19,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.JsonObject
 import se.spareparts.inventory.domain.PartMatcher
+import se.spareparts.inventory.domain.Permissions
 import java.io.File
 import java.io.IOException
 import java.util.UUID
@@ -47,19 +48,19 @@ sealed interface AdjustOutcome {
 class Repository(
     filesDir: File,
     private val settings: SettingsStore,
+    private val session: SessionManager,
     private val connectivity: ConnectivityMonitor,
     private val scope: CoroutineScope,
     private val scheduleFlush: () -> Unit,
 ) {
-    val api = ApiClient({ settings.current.server() })
+    val api = ApiClient({ ServerConfig(settings.current.baseUrl, session.token) })
 
     private val cacheFile = JsonFile(File(filesDir, "parts-cache.json"), CachedParts.serializer(), api.json)
-    private val queueFile = JsonFile(File(filesDir, "pending-adjustments.json"),
-        ListSerializer(PendingAdjustment.serializer()), api.json)
+    private val queue = PendingQueue(JsonFile(File(filesDir, "pending-adjustments.json"),
+        ListSerializer(PendingAdjustment.serializer()), api.json))
 
     private val base = MutableStateFlow(CachedParts())
-    private val _pending = MutableStateFlow<List<PendingAdjustment>>(emptyList())
-    val pending: StateFlow<List<PendingAdjustment>> = _pending.asStateFlow()
+    val pending: StateFlow<List<PendingAdjustment>> = queue.items
 
     private val _status = MutableStateFlow(SyncStatus())
     val status: StateFlow<SyncStatus> = _status.asStateFlow()
@@ -72,10 +73,10 @@ class Repository(
 
     val online: StateFlow<Boolean> get() = connectivity.online
 
-    val parts: StateFlow<List<Part>> = combine(base, _pending) { b, q -> applyPending(b.parts, q) }
+    val parts: StateFlow<List<Part>> = combine(base, pending) { b, q -> applyPending(b.parts, q) }
         .stateIn(scope, SharingStarted.Eagerly, emptyList())
 
-    val categories: StateFlow<List<String>> = combine(base, _pending) { b, _ ->
+    val categories: StateFlow<List<String>> = combine(base, pending) { b, _ ->
         b.parts.mapNotNull { it.category?.takeIf(String::isNotBlank) }.distinct().sorted()
     }.stateIn(scope, SharingStarted.Eagerly, emptyList())
 
@@ -84,7 +85,7 @@ class Repository(
     init {
         scope.launch {
             cacheFile.read()?.let { base.value = it }
-            queueFile.read()?.let { _pending.value = it }
+            queue.load()
             _loaded.value = true
         }
         connectivity.onBecameOnline = { scope.launch { sync() } }
@@ -96,6 +97,9 @@ class Repository(
 
     fun part(pn: String): Part? = parts.value.firstOrNull { it.pn.equals(pn, ignoreCase = true) }
 
+    /** What the signed-in account may do. The server enforces it; the UI only follows. */
+    val perms: Permissions get() = session.perms
+
     // ------------------------------------------------------------------ sync
 
     /** Sends queued changes, then pulls whatever changed since our version. Safe to call often. */
@@ -105,9 +109,15 @@ class Repository(
             _status.update { it.copy(error = "Set the server URL in Settings") }
             return false
         }
+        if (!session.signedIn) {
+            _status.update { it.copy(syncing = false, error = "Not signed in") }
+            return false
+        }
         return syncMutex.withLock {
             _status.update { it.copy(syncing = true) }
             try {
+                // Re-read the account every sync so a changed role takes effect straight away.
+                session.updateUser(api.me().user)
                 flushLocked()
                 val since = if (full || base.value.parts.isEmpty()) null else settings.current.version
                 val resp = api.parts(since)
@@ -122,7 +132,12 @@ class Repository(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _status.value = SyncStatus(reachable = e is ApiException, error = describe(e))
+                // A 401 ends the session (the queue is kept) and sends us back to the sign-in screen.
+                val signedOut = session.onApiError(e)
+                _status.value = SyncStatus(
+                    reachable = e is ApiException,
+                    error = if (signedOut) SessionManager.SESSION_ENDED else describe(e),
+                )
                 false
             }
         }
@@ -131,22 +146,26 @@ class Repository(
     /** Flush the offline queue. Returns true when nothing is left that could be retried. */
     suspend fun flush(): Boolean {
         awaitLoaded()
-        if (_pending.value.isEmpty()) return true
-        if (!settings.current.configured) return false
+        if (queue.isEmpty) return true
+        if (!settings.current.configured || !session.signedIn) return false
         return syncMutex.withLock {
             try {
                 flushLocked(); true
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _status.update { it.copy(reachable = e is ApiException, error = describe(e)) }
+                val signedOut = session.onApiError(e)
+                _status.update {
+                    it.copy(reachable = e is ApiException,
+                        error = if (signedOut) SessionManager.SESSION_ENDED else describe(e))
+                }
                 false
             }
         }
     }
 
     private suspend fun flushLocked() {
-        val batch = _pending.value
+        val batch = queue.value
         if (batch.isEmpty()) return
         val resp = api.adjustBatch(batch)
         val done = resp.results.mapNotNull { it.id }.toSet()
@@ -156,35 +175,32 @@ class Repository(
         if (accepted.isNotEmpty()) {
             base.update { it.copy(parts = applyPending(it.parts, accepted)) }
         }
-        setPending(_pending.value.filterNot { it.id in done })
+        queue.remove(done)
         resp.results.filter { !it.ok }.forEach { r ->
             val item = batch.firstOrNull { it.id == r.id }
             _messages.tryEmit("${item?.pn ?: "?"}: change rejected – ${r.error ?: "unknown error"}")
         }
     }
 
-    private suspend fun setPending(list: List<PendingAdjustment>) {
-        _pending.value = list
-        queueFile.write(list)
-    }
-
     // --------------------------------------------------------------- stock
 
     suspend fun adjust(pn: String, delta: Double? = null, set: Double? = null, reason: String = ""): AdjustOutcome {
         awaitLoaded()
+        if (!perms.canAdjust) return AdjustOutcome.Rejected("Your account may not change stock")
         val current = part(pn) ?: return AdjustOutcome.Rejected("Unknown part $pn")
         val after = set ?: (current.stock + (delta ?: 0.0))
         if (after < 0) return AdjustOutcome.Rejected("Only ${current.stock.qty()} in stock")
         if (set == null && (delta ?: 0.0) == 0.0) return AdjustOutcome.Rejected("Nothing to change")
-        val user = settings.current.user
+        val user = session.user?.username.orEmpty()
 
-        if (settings.current.configured && connectivity.online.value && _pending.value.isEmpty()) {
+        if (settings.current.configured && session.signedIn && connectivity.online.value && queue.isEmpty) {
             try {
                 val updated = api.adjust(current.pn, delta, set, reason, user)
                 replaceInBase(updated)
                 _status.update { it.copy(reachable = true, error = null) }
                 return AdjustOutcome.Applied(updated)
             } catch (e: ApiException) {
+                if (session.onApiError(e)) return AdjustOutcome.Rejected(SessionManager.SESSION_ENDED)
                 return AdjustOutcome.Rejected(e.message ?: "Rejected by server")
             } catch (e: CancellationException) {
                 throw e
@@ -193,33 +209,44 @@ class Repository(
                 // fall through to the offline queue
             }
         }
-        val item = PendingAdjustment(
+        queue.add(PendingAdjustment(
             id = UUID.randomUUID().toString(), pn = current.pn,
             delta = if (set == null) delta else null, setTo = set, reason = reason, user = user,
-        )
-        setPending(_pending.value + item)
+        ))
         scheduleFlush()
-        if (connectivity.online.value) scope.launch { flush() }
+        if (connectivity.online.value && session.signedIn) scope.launch { flush() }
         return AdjustOutcome.Queued
     }
 
-    suspend fun discardPending() = setPending(emptyList())
+    suspend fun discardPending() = queue.clear()
 
     // ------------------------------------------------------------- details
 
     suspend fun detail(pn: String): PartDetail {
-        val d = api.part(pn)
+        val d = guard { api.part(pn) }
         replaceInBase(d.part)
         _status.update { it.copy(reachable = true) }
         return d
     }
 
-    suspend fun movements(pn: String): List<Movement> = api.movements(pn)
+    suspend fun movements(pn: String): List<Movement> = guard { api.movements(pn) }
 
     suspend fun update(pn: String, changes: JsonObject): Part {
-        val p = api.patch(pn, changes)
+        val p = guard { api.patch(pn, changes) }
         replaceInBase(p)
         return p
+    }
+
+    /** Runs a call and ends the session if the server says the token is no longer good. */
+    private suspend fun <T> guard(block: suspend () -> T): T {
+        try {
+            return block()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            session.onApiError(e)
+            throw e
+        }
     }
 
     private suspend fun replaceInBase(p: Part) {
@@ -237,9 +264,10 @@ class Repository(
 
     /** Server lookup, mapped onto the local (optimistic) versions of the parts where we have them. */
     suspend fun lookupRemote(text: String): List<Part> =
-        api.lookup(text).map { remote -> part(remote.pn) ?: remote }
+        guard { api.lookup(text) }.map { remote -> part(remote.pn) ?: remote }
 
-    fun canReachServer(): Boolean = settings.current.configured && connectivity.online.value
+    fun canReachServer(): Boolean =
+        settings.current.configured && session.signedIn && connectivity.online.value
 
     fun shareUrl(pn: String): String? {
         val s = settings.current
@@ -261,7 +289,11 @@ class Repository(
         }
 
         fun describe(e: Throwable): String = when (e) {
-            is ApiException -> if (e.code == 401) "API key rejected" else e.message ?: "Server error ${e.code}"
+            is ApiException -> when (e.code) {
+                401 -> SessionManager.SESSION_ENDED
+                403 -> e.message ?: "Your account is not allowed to do this"
+                else -> e.message ?: "Server error ${e.code}"
+            }
             is NotConfiguredException -> e.message ?: "Server not configured"
             is java.net.UnknownHostException -> "Server not found"
             is java.net.SocketTimeoutException -> "Server did not respond"

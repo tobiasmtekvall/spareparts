@@ -275,7 +275,7 @@ class Handler(BaseHTTPRequestHandler):
         user = None
         key = self.headers.get("X-Api-Key") or qs.get("key", [""])[0]
         if key:
-            user = ACC.by_token(key)
+            user = session_user(key) if key.count(".") == 3 else ACC.by_token(key)
             if not user and PASSWORD and ACC.count() == 0 and hmac.compare_digest(key, PASSWORD):
                 user = BOOTSTRAP_USER
         if not user:
@@ -325,6 +325,8 @@ class Handler(BaseHTTPRequestHandler):
                                         "user": u["username"] if u else None,
                                         "accounts": ACC.count(),
                                         "version": STORE.version, "mode": "local" if REPLICA else "cloud"})
+            if path == "/api/login" and method == "POST":
+                return self._api_login()
             user = self._user(qs)
             if path == "/password":
                 return self._password_page(method, user)
@@ -379,6 +381,19 @@ class Handler(BaseHTTPRequestHandler):
             nxt = self._safe_next(parse_qs(urlparse(self.path).query).get("next", ["/"])[0])
             username = unquote(cookies(self.headers.get("Cookie")).get("sp_user", ""))
         self._send(401 if err else 200, page(LOGIN_HTML, err, user=username, next=nxt), "text/html; charset=utf-8")
+
+    def _api_login(self):
+        """Sign-in for the phone app: returns a token tied to the account."""
+        b = self._json()
+        user, err = ACC.verify(b.get("username", ""), b.get("password", ""))
+        if not user:
+            time.sleep(1.0)
+            return self._send(401, {"error": err or "Wrong username or password"})
+        days = 60
+        ACC.log(user["username"], "signin", user["username"], "phone app", source="android", ip=self._client_ip())
+        return self._send(200, {"token": make_session(user["id"], user["sess_ver"], days),
+                                "expires": int(time.time()) + days * 86400,
+                                "user": {k: user[k] for k in ("id", "username", "name", "role", "perms", "must_change")}})
 
     def _password_page(self, method, user):
         if not user or user["kind"] == "device":
@@ -478,7 +493,10 @@ class Handler(BaseHTTPRequestHandler):
                     raise Denied(err or "Current password is wrong")
                 ACC.set_password(user["id"], b.get("new", ""), must_change=False, by=who)
                 fresh = ACC.by_id(user["id"])
-                return self._send(200, {"ok": True}, headers={"Set-Cookie": self._cookie_bits(fresh)})
+                # changing a password ends every other session; hand this caller a fresh one
+                return self._send(200, {"ok": True, "token": make_session(fresh["id"], fresh["sess_ver"], 60),
+                                        "user": {k: fresh[k] for k in ("id", "username", "name", "role", "perms", "must_change")}},
+                                  headers={"Set-Cookie": self._cookie_bits(fresh)})
 
         # ---- accounts (admin) ----
         if seg and seg[0] == "users":

@@ -91,6 +91,7 @@ import se.spareparts.inventory.AppContainer
 import se.spareparts.inventory.data.Movement
 import se.spareparts.inventory.data.Part
 import se.spareparts.inventory.data.qty
+import se.spareparts.inventory.domain.Permissions
 import se.spareparts.inventory.ui.components.EmptyState
 import se.spareparts.inventory.ui.components.formatEur
 import se.spareparts.inventory.ui.components.stockColors
@@ -121,6 +122,9 @@ fun PartDetailScreen(c: AppContainer, pn: String, onBack: () -> Unit, snackbar: 
     val part by vm.part.collectAsStateWithLifecycle()
     val extras by vm.extras.collectAsStateWithLifecycle()
     val pending by vm.pending.collectAsStateWithLifecycle()
+    // Permission-aware UI: controls the account may not use are not drawn at all.
+    val session by c.session.session.collectAsStateWithLifecycle()
+    val perms = session?.permissions ?: Permissions.NONE
     val context = LocalContext.current
     var dialog by remember { mutableStateOf<DetailDialog?>(null) }
     val scroll = TopAppBarDefaults.enterAlwaysScrollBehavior()
@@ -163,7 +167,7 @@ fun PartDetailScreen(c: AppContainer, pn: String, onBack: () -> Unit, snackbar: 
             item(key = "header") { Header(p, extras.error.takeIf { !extras.refreshed }) }
             item(key = "stock") {
                 StockCard(
-                    p, pending,
+                    p, pending, perms,
                     onDelta = { d -> vm.adjust(delta = d, reason = if (d < 0) "Taken" else "Returned") },
                     onDialog = { dialog = DetailDialog.Quantity(it) },
                     onEditMin = { dialog = DetailDialog.Min },
@@ -178,9 +182,9 @@ fun PartDetailScreen(c: AppContainer, pn: String, onBack: () -> Unit, snackbar: 
                         },
                         overlineContent = { Text("Location") },
                         leadingContent = { Icon(Icons.Filled.Place, null) },
-                        trailingContent = { Icon(Icons.Filled.Edit, "Edit location") },
+                        trailingContent = { if (perms.canEditLight) Icon(Icons.Filled.Edit, "Edit location") },
                         colors = ListItemDefaults.colors(containerColor = CardDefaults.cardColors().containerColor),
-                        modifier = Modifier.clickable { dialog = DetailDialog.Location },
+                        modifier = if (perms.canEditLight) Modifier.clickable { dialog = DetailDialog.Location } else Modifier,
                     )
                 }
             }
@@ -190,7 +194,9 @@ fun PartDetailScreen(c: AppContainer, pn: String, onBack: () -> Unit, snackbar: 
             }
             if (p.specs.isNotEmpty()) item(key = "specs") { SpecsCard(p) }
             item(key = "notes") {
-                InfoCard(title = "Notes", action = { IconButton(onClick = { dialog = DetailDialog.Notes }) { Icon(Icons.Filled.Edit, "Edit notes") } }) {
+                InfoCard(title = "Notes", action = if (!perms.canEditLight) null else {
+                    { IconButton(onClick = { dialog = DetailDialog.Notes }) { Icon(Icons.Filled.Edit, "Edit notes") } }
+                }) {
                     Text(
                         p.notes?.takeIf { it.isNotBlank() } ?: "No notes",
                         style = MaterialTheme.typography.bodyMedium,
@@ -265,7 +271,8 @@ private fun Header(p: Part, note: String?) {
 }
 
 @Composable
-private fun StockCard(p: Part, pending: Int, onDelta: (Double) -> Unit, onDialog: (QtyMode) -> Unit, onEditMin: () -> Unit) {
+private fun StockCard(p: Part, pending: Int, perms: Permissions, onDelta: (Double) -> Unit,
+                      onDialog: (QtyMode) -> Unit, onEditMin: () -> Unit) {
     val state = p.stockState
     val (bg, fg) = stockColors(state)
     val view = LocalView.current
@@ -281,11 +288,21 @@ private fun StockCard(p: Part, pending: Int, onDelta: (Double) -> Unit, onDialog
                     Icon(AppIcons.Sync, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.secondary)
                     Text(" $pending pending", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary)
                 }
+                if (!perms.canAdjust) {
+                    Spacer(Modifier.width(8.dp))
+                    Surface(color = MaterialTheme.colorScheme.surfaceVariant,
+                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant, shape = RoundedCornerShape(50)) {
+                        Text("Read only", style = MaterialTheme.typography.labelLarge,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
+                    }
+                }
                 Spacer(Modifier.weight(1f))
-                TextButton(onClick = onEditMin) { Text("min ${p.min.qty()}") }
+                if (perms.canEditLight) TextButton(onClick = onEditMin) { Text("min ${p.min.qty()}") }
+                else Text("min ${p.min.qty()}", style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(end = 8.dp))
             }
             Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                FilledIconButton(
+                if (perms.canAdjust) FilledIconButton(
                     onClick = { view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY); onDelta(-1.0) },
                     enabled = p.stock >= 1,
                     modifier = Modifier.size(64.dp),
@@ -308,7 +325,7 @@ private fun StockCard(p: Part, pending: Int, onDelta: (Double) -> Unit, onDialog
                     Text("on hand" + (p.unit?.takeIf { it.isNotBlank() }?.let { " · ${it.lowercase()}" } ?: ""),
                         style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                FilledIconButton(
+                if (perms.canAdjust) FilledIconButton(
                     onClick = { view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY); onDelta(1.0) },
                     modifier = Modifier.size(64.dp),
                 ) { Icon(Icons.Filled.Add, "Add one", Modifier.size(32.dp)) }
@@ -323,7 +340,7 @@ private fun StockCard(p: Part, pending: Int, onDelta: (Double) -> Unit, onDialog
                 )
                 Spacer(Modifier.height(12.dp))
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            if (perms.canAdjust) Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 FilledTonalButton(onClick = { onDialog(QtyMode.TAKE) }, enabled = p.stock > 0, modifier = Modifier.weight(1f),
                     contentPadding = PaddingValues(horizontal = 8.dp)) { Text("Take") }
                 FilledTonalButton(onClick = { onDialog(QtyMode.RETURN) }, modifier = Modifier.weight(1f),
@@ -333,7 +350,7 @@ private fun StockCard(p: Part, pending: Int, onDelta: (Double) -> Unit, onDialog
                 OutlinedButton(onClick = { onDialog(QtyMode.SET) }, modifier = Modifier.weight(1f),
                     contentPadding = PaddingValues(horizontal = 8.dp)) { Text("Set count") }
             }
-            if ((p.qtyOrdered ?: 0.0) > 0) {
+            if (perms.canAdjust && (p.qtyOrdered ?: 0.0) > 0) {
                 Spacer(Modifier.height(8.dp))
                 Button(onClick = { onDialog(QtyMode.RECEIVE) }, modifier = Modifier.fillMaxWidth()) {
                     Icon(AppIcons.LocalShipping, null, Modifier.size(18.dp))

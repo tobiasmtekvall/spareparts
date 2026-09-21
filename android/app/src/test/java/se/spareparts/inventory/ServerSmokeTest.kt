@@ -16,18 +16,67 @@ import java.util.UUID
 
 /**
  * Talks to a real inventory server. Skipped unless run with
- *   ./gradlew testDebugUnitTest -Pserver=http://localhost:8765
+ *   ./gradlew testDebugUnitTest -Pserver=http://localhost:9001
+ * It signs in first (-Puser= / -Ppass=, or INVENTORY_USER / INVENTORY_PASSWORD) and uses the
+ * returned token for everything else.
  * Stock changes made here are reverted (net zero), but they do appear in the movement log.
  */
 class ServerSmokeTest {
     private val server = System.getProperty("spareparts.server").orEmpty()
-    private val api = ApiClient({ ServerConfig(server, System.getenv("INVENTORY_API_KEY").orEmpty(), "smoke-test") })
+    private val username = System.getProperty("spareparts.user").orEmpty()
+    private val password = System.getProperty("spareparts.pass").orEmpty()
+
+    /** Filled in by the sign-in below; sent as X-Api-Key on every later call. */
+    private var token = ""
+    private val api = ApiClient({ ServerConfig(server, token) })
 
     @Test fun endToEnd() = runBlocking {
         assumeTrue("no -Pserver given", server.isNotBlank())
 
         val ping = api.ping()
         assertTrue(ping.ok)
+
+        // ---- sign in -------------------------------------------------------
+        try {
+            api.parts(null)
+            fail("expected 401 before signing in")
+        } catch (e: ApiException) {
+            assertEquals(401, e.code)
+            println("without a token: ${e.message}")
+        }
+
+        try {
+            api.login(username, "definitely-not-the-password")
+            fail("expected 401 for a wrong password")
+        } catch (e: ApiException) {
+            assertEquals(401, e.code)
+            assertTrue("server explains itself: ${e.message}", (e.message?.length ?: 0) > 5)
+            println("wrong password: ${e.message}")
+        }
+
+        val login = api.login(username, password)
+        assertTrue("got a token", login.token.isNotBlank())
+        assertEquals(username, login.user.username)
+        assertTrue("perms came with the login", login.user.perms.isNotEmpty())
+        token = login.token
+        println("signed in as ${login.user.username} (${login.user.role}) perms=${login.user.perms}")
+
+        val me = api.me()
+        assertEquals(login.user.username, me.user.username)
+        assertEquals(login.user.role, me.user.role)
+        assertEquals(login.user.permissions.perms, me.user.permissions.perms)
+        assertTrue(me.user.permissions.canView)
+        assertTrue("this test needs an account that may book stock", me.user.permissions.canAdjust)
+
+        // A token the server does not know ends the session.
+        val good = token
+        token = "3.9.9999999999.not-a-real-token"
+        try {
+            api.parts(null); fail("expected 401 for a bogus token")
+        } catch (e: ApiException) {
+            assertEquals(401, e.code)
+        }
+        token = good
 
         val all = api.parts(null)
         val parts = all.parts!!
@@ -99,6 +148,8 @@ class ServerSmokeTest {
 
         val moves = api.movements(sample.pn)
         assertTrue(moves.any { it.reason == "smoke batch revert" })
+        // The server attributes every movement to the signed-in account, not to an X-User header.
+        assertEquals(username, moves.first().user)
         assertTrue(moves.first().ts > 1_000_000_000)
 
         val low = api.low()

@@ -13,12 +13,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -27,7 +24,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -38,60 +34,42 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import se.spareparts.inventory.AppContainer
 import se.spareparts.inventory.BuildConfig
-import se.spareparts.inventory.data.ApiClient
 import se.spareparts.inventory.data.AppSettings
-import se.spareparts.inventory.data.Repository
-import se.spareparts.inventory.data.ServerConfig
+import se.spareparts.inventory.ui.auth.RoleChip
 import se.spareparts.inventory.ui.theme.AppIcons
-import kotlin.coroutines.cancellation.CancellationException
-
-private sealed interface TestResult {
-    data object Running : TestResult
-    data class Ok(val text: String) : TestResult
-    data class Failed(val text: String) : TestResult
-}
+import se.spareparts.inventory.ui.theme.CodeStyle
 
 @Composable
-fun SettingsScreen(c: AppContainer) {
+fun SettingsScreen(c: AppContainer, changePassword: () -> Unit) {
     val settings by c.settings.settings.collectAsStateWithLifecycle()
+    val session by c.session.session.collectAsStateWithLifecycle()
     val repo = c.repository
     val status by repo.status.collectAsStateWithLifecycle()
     val pending by repo.pending.collectAsStateWithLifecycle()
     val parts by repo.parts.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
 
-    var url by rememberSaveable { mutableStateOf(settings.baseUrl) }
-    var key by rememberSaveable { mutableStateOf(settings.apiKey) }
-    var user by rememberSaveable { mutableStateOf(settings.user) }
-    var showKey by rememberSaveable { mutableStateOf(false) }
-    var test by androidx.compose.runtime.remember { mutableStateOf<TestResult?>(null) }
     var confirmDiscard by rememberSaveable { mutableStateOf(false) }
-    val dirty = url.trim() != settings.baseUrl || key.trim() != settings.apiKey || user.trim() != settings.user
+    var confirmSignOut by rememberSaveable { mutableStateOf(false) }
 
     // Tick so "last synced x min ago" stays fresh.
-    var now by androidx.compose.runtime.remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) { while (true) { delay(30_000); now = System.currentTimeMillis() } }
 
-    fun save(thenSync: Boolean) = scope.launch {
-        c.settings.saveServer(normalizeUrl(url), key, user)
-        url = normalizeUrl(url)
-        if (thenSync) repo.sync(full = true)
-    }
+    val user = session?.user
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).imePadding().padding(16.dp),
@@ -100,51 +78,41 @@ fun SettingsScreen(c: AppContainer) {
         Text("Settings", style = MaterialTheme.typography.headlineMedium)
 
         Card {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Server", style = MaterialTheme.typography.titleMedium)
-                OutlinedTextField(
-                    value = url, onValueChange = { url = it; test = null },
-                    label = { Text("Server URL") }, placeholder = { Text("http://192.168.1.20:8765") },
-                    singleLine = true, modifier = Modifier.fillMaxWidth(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
-                    supportingText = { Text("Shown in the server console as “Network”.") },
-                )
-                OutlinedTextField(
-                    value = key, onValueChange = { key = it; test = null },
-                    label = { Text("API key (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
-                    leadingIcon = { Icon(Icons.Filled.Lock, null) },
-                    visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
-                    trailingIcon = {
-                        TextButton(onClick = { showKey = !showKey }) { Text(if (showKey) "Hide" else "Show") }
-                    },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Next),
-                )
-                OutlinedTextField(
-                    value = user, onValueChange = { user = it },
-                    label = { Text("Your name") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
-                    leadingIcon = { Icon(Icons.Filled.Person, null) },
-                    supportingText = { Text("Recorded with every stock change.") },
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedButton(
-                        onClick = {
-                            test = TestResult.Running
-                            scope.launch { test = testConnection(ServerConfig(normalizeUrl(url), key.trim(), user.trim())) }
-                        },
-                        enabled = url.isNotBlank() && test != TestResult.Running,
-                    ) { Text("Test connection") }
-                    Button(onClick = { save(thenSync = true) }, enabled = dirty && url.isNotBlank()) { Text("Save") }
-                }
-                when (val t = test) {
-                    TestResult.Running -> Row(verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                        Spacer(Modifier.width(8.dp)); Text("Connecting…")
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Signed in", style = MaterialTheme.typography.titleMedium)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(user?.displayName ?: "–", style = MaterialTheme.typography.titleLarge)
+                        Text(
+                            if (session?.device == true) "Shared device token"
+                            else user?.username.orEmpty().ifBlank { "–" },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
-                    is TestResult.Ok -> StatusLine(true, t.text)
-                    is TestResult.Failed -> StatusLine(false, t.text)
-                    null -> Unit
+                    RoleChip(user?.roleLabel ?: "–")
                 }
+                Text(user?.roleText.orEmpty(), style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (session?.device != true) {
+                        OutlinedButton(onClick = changePassword) { Text("Change password") }
+                    }
+                    TextButton(onClick = {
+                        if (pending.isNotEmpty()) confirmSignOut = true
+                        else scope.launch { c.session.signOut() }
+                    }) { Text("Sign out") }
+                }
+            }
+        }
+
+        Card {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Server", style = MaterialTheme.typography.titleMedium)
+                Text(settings.baseUrl.ifBlank { "Not set" }, style = CodeStyle, maxLines = 2,
+                    overflow = TextOverflow.Ellipsis)
+                Text("To use a different server, sign out and sign in there.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
 
@@ -159,8 +127,10 @@ fun SettingsScreen(c: AppContainer) {
                 Info("Data version", settings.version.takeIf { it > 0 }?.toString() ?: "–")
                 Info("Pending changes", pending.size.toString())
                 status.error?.let { StatusLine(false, it) }
+                if (status.error == null && status.reachable == true) StatusLine(true, "Server reachable")
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Button(onClick = { scope.launch { repo.sync(full = true) } }, enabled = settings.configured && !status.syncing) {
+                    Button(onClick = { scope.launch { repo.sync(full = true) } },
+                        enabled = settings.configured && !status.syncing) {
                         Icon(AppIcons.Sync, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Sync now")
                     }
                     if (status.syncing) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
@@ -203,6 +173,21 @@ fun SettingsScreen(c: AppContainer) {
             dismissButton = { TextButton(onClick = { confirmDiscard = false }) { Text("Keep") } },
         )
     }
+
+    if (confirmSignOut) {
+        AlertDialog(
+            onDismissRequest = { confirmSignOut = false },
+            title = { Text("Sign out with ${pending.size} change(s) waiting?") },
+            text = {
+                Text("These stock changes have not reached the server yet. They are kept on this phone " +
+                    "and will be sent after the next sign-in – but only somebody who may book stock can send them.")
+            },
+            confirmButton = {
+                TextButton(onClick = { confirmSignOut = false; scope.launch { c.session.signOut() } }) { Text("Sign out") }
+            },
+            dismissButton = { TextButton(onClick = { confirmSignOut = false }) { Text("Stay signed in") } },
+        )
+    }
 }
 
 @Composable
@@ -222,31 +207,3 @@ private fun StatusLine(ok: Boolean, text: String) {
         Text(text, style = MaterialTheme.typography.bodyMedium)
     }
 }
-
-internal fun normalizeUrl(raw: String): String {
-    var u = raw.trim().trimEnd('/')
-    if (u.isEmpty()) return u
-    if (!u.startsWith("http://") && !u.startsWith("https://")) u = "http://$u"
-    return u
-}
-
-private suspend fun testConnection(cfg: ServerConfig): TestResult {
-    val api = ApiClient({ cfg })
-    return try {
-        val t0 = System.nanoTime()
-        val ping = api.ping()
-        val ms = (System.nanoTime() - t0) / 1_000_000
-        if (!ping.ok) return TestResult.Failed("Server answered but reported a problem")
-        // /api/ping is open; check the key against a protected endpoint.
-        if (ping.auth) {
-            if (cfg.apiKey.isBlank()) return TestResult.Failed("Server requires an API key")
-            api.parts(since = ping.version)
-        }
-        TestResult.Ok("Connected in $ms ms · data version ${ping.version}" + if (ping.auth) " · key accepted" else "")
-    } catch (e: CancellationException) {
-        throw e
-    } catch (e: Exception) {
-        TestResult.Failed(Repository.describe(e))
-    }
-}
-

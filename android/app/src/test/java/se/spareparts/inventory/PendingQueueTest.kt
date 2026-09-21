@@ -26,7 +26,7 @@ class PendingQueueTest {
     }
 
     @Test fun partsParseWithNullsAndOddSpecs() {
-        val api = ApiClient({ ServerConfig("", "", "") })
+        val api = ApiClient({ ServerConfig("") })
         val json = """{"version":7,"public_url":"http://x","parts":[
             {"pn":"P1","name":"n","installed":null,"price":null,"on_hand":2.0,"min_qty":null,
              "specs":[["Width","800"],["Voltage",24],["Solo"]],"links":[{"title":"t","url":"u","custom":true}],
@@ -43,7 +43,7 @@ class PendingQueueTest {
     }
 
     @Test fun unchangedResponse() {
-        val api = ApiClient({ ServerConfig("", "", "") })
+        val api = ApiClient({ ServerConfig("") })
         val r = api.json.decodeFromString(se.spareparts.inventory.data.PartsResponse.serializer(), """{"version":3,"unchanged":true}""")
         assertEquals(true, r.unchanged)
         assertEquals(null, r.parts)
@@ -56,7 +56,7 @@ class PendingQueueTest {
     }
 
     @Test fun resolvesRelativeFileUrls() {
-        val api = ApiClient({ ServerConfig("192.168.1.20:8765/", "", "") })
+        val api = ApiClient({ ServerConfig("192.168.1.20:8765/") })
         assertEquals("http://192.168.1.20:8765/files/Belts/A1%20-%20x/manual.pdf",
             api.resolve("/files/Belts/A1%20-%20x/manual.pdf"))
         assertEquals("https://example.com/a", api.resolve("https://example.com/a"))

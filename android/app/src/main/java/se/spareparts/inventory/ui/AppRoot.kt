@@ -36,6 +36,8 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import kotlinx.coroutines.launch
 import se.spareparts.inventory.AppContainer
+import se.spareparts.inventory.ui.auth.ChangePasswordScreen
+import se.spareparts.inventory.ui.auth.SignInScreen
 import se.spareparts.inventory.ui.components.SyncBanner
 import se.spareparts.inventory.ui.detail.PartDetailScreen
 import se.spareparts.inventory.ui.scan.ScannerScreen
@@ -50,14 +52,30 @@ object Routes {
     const val LOW = "low"
     const val SETTINGS = "settings"
     const val PART = "part/{pn}"
+    const val PASSWORD = "password"
     fun part(pn: String) = "part/" + Uri.encode(pn)
     fun search(q: String = "") = "search?q=" + Uri.encode(q)
 }
 
 private data class Tab(val route: String, val nav: String, val label: String, val icon: ImageVector)
 
+/**
+ * Decides what the app shows: the sign-in screen while there is no token, the forced
+ * "choose a password" wall for a freshly created account, and otherwise the app itself.
+ */
 @Composable
 fun AppRoot(c: AppContainer) {
+    val session by c.session.session.collectAsStateWithLifecycle()
+    val s = session
+    when {
+        s == null || !s.valid -> SignInScreen(c)
+        s.user.mustChange && !s.device -> ChangePasswordScreen(c, forced = true, onDone = {})
+        else -> MainApp(c)
+    }
+}
+
+@Composable
+private fun MainApp(c: AppContainer) {
     val nav = rememberNavController()
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -136,7 +154,12 @@ fun AppRoot(c: AppContainer) {
                 composable(Routes.LOW) {
                     SearchScreen(c, initialQuery = "", lowOnly = true, openPart = { nav.navigate(Routes.part(it)) })
                 }
-                composable(Routes.SETTINGS) { SettingsScreen(c) }
+                composable(Routes.SETTINGS) {
+                    SettingsScreen(c, changePassword = { nav.navigate(Routes.PASSWORD) })
+                }
+                composable(Routes.PASSWORD) {
+                    ChangePasswordScreen(c, forced = false, onDone = {}, onCancel = { nav.popBackStack() })
+                }
                 composable(Routes.PART, arguments = listOf(navArgument("pn") { type = NavType.StringType })) { entry ->
                     val pn = entry.arguments?.getString("pn").orEmpty()
                     PartDetailScreen(c, pn, onBack = { nav.popBackStack() }, snackbar = snackbar)
