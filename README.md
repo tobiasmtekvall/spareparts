@@ -33,7 +33,7 @@ Everything shares one inventory:
 5. Wait for the deploy to turn green. Opening the address shows the sign-in page.
    - The cloud starts empty. The first time the local app connects, it uploads the inventory, history and manuals.
 
-**Redeploying after a code change.** This service was created from the public repo URL, so Railway has no webhook on it and does **not** redeploy by itself. Either press **Deploy** (⋮ menu → Redeploy) on the service in Railway, or connect the repo properly: sign in to GitHub as `tobiasmtekvall`, open https://github.com/settings/installations → Railway App → Configure, add the `spareparts` repository, then in Railway open the service → Settings → Source and pick the repo. After that every push to `main` deploys automatically. Your data stays on the volume either way.
+**Deploying a change.** Every push to `main` deploys automatically (the repo is connected to Railway's GitHub app and auto-deploy is on). Your data stays on the volume. If a deploy ever needs forcing, use the service → Settings → Source → **Check for updates**, then the **Update available** badge.
 
 ## 2. Local app (site PC)
 
