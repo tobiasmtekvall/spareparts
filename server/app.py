@@ -188,7 +188,8 @@ button{width:100%;padding:11px;border:0;border-radius:8px;background:var(--accen
 """
 
 LOGIN_HTML = """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Sign in - Spare Parts</title><style>__CSS__</style></head><body><form method="post" action="/login">
+<title>Sign in - Spare Parts</title><link rel="icon" href="/favicon.ico"><style>__CSS__</style></head><body><form method="post" action="/login">
+<img src="/icon-192.png" alt="" width="64" height="64" style="display:block;margin:0 auto 10px">
 <h1>Spare Parts</h1><p>J&#246;nk&#246;ping inventory</p>
 __ERR__
 <label>Username<input name="username" autocomplete="username" value="__USER__" autofocus required></label>
@@ -197,7 +198,7 @@ __ERR__
 <div class="note">Forgotten your password? Ask an administrator to reset it.</div></form></body></html>"""
 
 PASSWORD_HTML = """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Choose a password - Spare Parts</title><style>__CSS__</style></head><body><form method="post" action="/password">
+<title>Choose a password - Spare Parts</title><link rel="icon" href="/favicon.ico"><style>__CSS__</style></head><body><form method="post" action="/password">
 <h1>Choose a password</h1><p>__INTRO__</p>
 __ERR__
 <label>Current password<input name="current" type="password" autocomplete="current-password" autofocus required></label>
@@ -334,7 +335,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not user:
                     return self._send(401, {"error": "Sign-in required"})
                 return self._api(method, path[5:], qs, user)
-            if path in ("/app.css", "/favicon.ico"):
+            if path in ("/app.css", "/favicon.ico", "/icon.png", "/icon-192.png", "/apple-touch-icon.png"):
                 return self._static(path)
             if not user:
                 return self._redirect("/login?next=" + quote(self.path))

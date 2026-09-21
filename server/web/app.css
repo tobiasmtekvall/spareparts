@@ -20,8 +20,7 @@ kbd{font:11px var(--mono);border:1px solid var(--line2);border-bottom-width:2px;
 .side{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;padding:16px 10px}
 .brand{display:flex;gap:10px;align-items:center;padding:4px 8px 18px}
 .brand b{display:block;font-size:15px}.brand small{color:var(--muted)}
-.logo{width:30px;height:30px;border-radius:8px;background:var(--accent);position:relative}
-.logo::after{content:"";position:absolute;inset:9px 7px 6px;border:2.5px solid var(--accent-ink);border-top-width:4px;border-radius:2px}
+.logo{width:34px;height:34px;object-fit:contain;flex:none}
 nav a{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;color:var(--muted);text-decoration:none;margin-bottom:2px}
 nav a i{font-style:normal;width:18px;text-align:center}
 nav a kbd{margin-left:auto;opacity:0;transition:.15s}
