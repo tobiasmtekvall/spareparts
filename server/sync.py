@@ -13,6 +13,10 @@ def _win_long(p):
     """Windows cannot open paths whose folder name ends with a dot without the \\?\\ prefix."""
     return Path("\\\\?\\" + os.path.abspath(str(p)))
 
+def windows_safe(rel):
+    """Windows cannot create a folder or file whose name ends with a dot or a space."""
+    return os.name != "nt" or not any(seg != seg.rstrip(". ") for seg in rel.split("/"))
+
 def read_file(p):
     p = Path(p)
     try:
@@ -51,8 +55,9 @@ class RemoteError(Exception):
     pass
 
 class Syncer:
-    def __init__(self, store, remote_url, key, files_dir=None, interval=30, log=print):
+    def __init__(self, store, remote_url, key, files_dir=None, interval=30, log=print, accounts=None):
         self.store = store
+        self.accounts = accounts
         self.remote = remote_url.rstrip("/")
         self.key = key
         self.files_dir = Path(files_dir) if files_dir else None
@@ -128,12 +133,14 @@ class Syncer:
                 it = items[0]
                 pn = quote(it["pn"], safe="")
                 try:
+                    actor = {"X-Actor": quote(it["body"].get("user") or it["body"].get("_user") or "")}
                     if it["kind"] == "patch":
-                        self._req("PATCH", f"/api/parts/{pn}", dict(it["body"]["changes"], _ts=it["body"]["ts"]))
+                        self._req("PATCH", f"/api/parts/{pn}", dict(it["body"]["changes"], _ts=it["body"]["ts"]),
+                                  headers=actor)
                     elif it["kind"] == "create":
-                        self._req("POST", "/api/parts", it["body"])
+                        self._req("POST", "/api/parts", it["body"], headers=actor)
                     elif it["kind"] == "delete":
-                        self._req("DELETE", f"/api/parts/{pn}")
+                        self._req("DELETE", f"/api/parts/{pn}", headers=actor)
                 except RemoteError as e:
                     # 400/404 (already exists / already deleted) will never succeed – drop it
                     self.log(f"sync: dropped {it['kind']} {it['pn']}: {e}")
@@ -151,6 +158,13 @@ class Syncer:
                 self.wake.set()   # a local change arrived meanwhile – push it, pull next round
                 return
             self.store.meta("remote_version", d["version"])
+        if self.accounts is not None:
+            try:
+                rows = self._req("GET", "/api/users/export").get("users", [])
+                if rows:
+                    self.accounts.replace_all(rows)
+            except RemoteError as e:
+                self.log("sync: could not fetch accounts:", e)
         after = int(self.store.meta("remote_mv_id") or 0)
         while True:
             rows = self._req("GET", f"/api/movements?after_id={after}&limit=500")
@@ -179,7 +193,10 @@ class Syncer:
                 local[f.relative_to(self.files_dir).as_posix()] = file_size(f)
         up = [p for p in local if p not in remote and local[p] <= 100 * 1024 * 1024]
         skipped = [p for p in local if p not in remote and local[p] > 100 * 1024 * 1024]
-        down = [p for p in remote if p not in local]
+        down = [p for p in remote if p not in local and windows_safe(p)]
+        for p in remote:
+            if p not in local and not windows_safe(p):
+                self.log(f"sync: cannot store {p} on Windows (name ends with a dot) - left in the cloud")
         for p in skipped:
             self.log(f"sync: skipped {p} (over 100 MB)")
         self.files_pending = len(up) + len(down)

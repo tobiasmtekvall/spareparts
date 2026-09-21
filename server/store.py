@@ -240,7 +240,7 @@ class Store:
             self._bump({"type": "import", "count": len(parts)})
             return len(parts)
 
-    def update(self, pn, changes, ts=None):
+    def update(self, pn, changes, ts=None, user=""):
         """Edit fields. With ts (sync), a field is only changed if nobody edited it later (last write wins)."""
         with self.lock:
             p = self.get(pn)
@@ -256,11 +256,11 @@ class Store:
             if not applied:
                 return p
             self.upsert(p, keep_stock=False, bump=False, field_ts=fts)
-            queued = self._queue("patch", p["pn"], {"changes": applied, "ts": ts})
+            queued = self._queue("patch", p["pn"], {"changes": applied, "ts": ts, "user": user})
             self._bump({"type": "part", "pn": p["pn"], "queued": queued})
             return self.get(pn)
 
-    def create(self, part):
+    def create(self, part, user=""):
         with self.lock:
             if not part.get("pn") or self.get(part["pn"]):
                 raise ValueError("Part number missing or already exists")
@@ -269,16 +269,16 @@ class Store:
             base.update({k: v for k, v in part.items() if k in FIELDS or k in JSON_FIELDS})
             base["on_hand"] = 0
             self.upsert(base, keep_stock=False, bump=False, field_ts={})
-            queued = self._queue("create", base["pn"], base)
+            queued = self._queue("create", base["pn"], dict(base, _user=user))
             self._bump({"type": "part", "pn": base["pn"], "queued": queued})
             return self.get(part["pn"])
 
-    def delete(self, pn):
+    def delete(self, pn, user=""):
         with self.lock:
             p = self.get(pn)
             if not p: return False
             self.db.execute("DELETE FROM parts WHERE pn=?", (p["pn"],))
-            queued = self._queue("delete", p["pn"], {})
+            queued = self._queue("delete", p["pn"], {"user": user})
             self._bump({"type": "delete", "pn": p["pn"], "queued": queued})
             return True
 

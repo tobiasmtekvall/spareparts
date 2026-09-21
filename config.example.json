@@ -7,8 +7,8 @@
   "research_dir": "../Spare Parts Research",
   "sync": {
     "remote_url": "https://YOUR-APP.up.railway.app",
-    "key": "SAME-AS-APP_PASSWORD-ON-RAILWAY",
+    "key": "DEVICE-TOKEN-FROM-ACCOUNTS-PAGE",
     "interval": 30
   },
-  "slack": { "bot_token": "", "app_token": "", "alert_channel": "", "command": "/parts" }
+  "slack": { "bot_token": "", "app_token": "", "alert_channel": "", "command": "/parts", "role": "staff" }
 }

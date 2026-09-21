@@ -22,7 +22,7 @@ Everything shares one inventory:
 
    | Variable | Value |
    |---|---|
-   | `APP_PASSWORD` | the shared site password (the same one as `sync.key` in the local `config.json`) |
+   | `APP_PASSWORD` | password for the first `admin` account (you change it at first sign-in) |
    | `SLACK_BOT_TOKEN` | `xoxb-…` (optional; see step 4 below) |
    | `SLACK_APP_TOKEN` | `xapp-…` (optional) |
    | `SLACK_ALERT_CHANNEL` | channel ID for low-stock alerts, e.g. `C0123ABCD` (optional) |
@@ -53,9 +53,29 @@ Everything shares one inventory:
 
 Without `sync.remote_url`, the local app runs standalone as before.
 
-## 3. Using the app
+## 3. Accounts and permissions
 
-- **Sign in** with your name and the site password. The name is recorded with every stock change.
+Everyone has their own account, so every booking and edit is recorded against a person.
+
+| Role | May do |
+|---|---|
+| **Admin** | Everything, and manages accounts |
+| **Manager** | Edit any field on a part, create and delete parts, import a workbook, plus everything staff may do |
+| **Staff** | Book stock in and out, set location, notes and minimum, upload manuals |
+| **Read-only** | Look, but change nothing |
+
+- **First sign-in after deployment:** the app creates the account `admin` using `APP_PASSWORD` (or `ADMIN_USER` / `ADMIN_PASSWORD` if you set those). It asks for a new password straight away.
+- **Adding people:** Accounts → New account. You give them a temporary password, and the app makes them choose their own at first sign-in.
+- **If someone leaves:** Disable the account. That signs them out everywhere at once, and their history stays intact. Resetting a password does the same.
+- **Wrong passwords** lock an account for 15 minutes after five tries.
+- **Phones and the site PC** use a device token instead of a password (Accounts → Device token). Bookings made from a phone are recorded under the person's name when the app sends it, and the token's role limits what that device may do.
+- **Audit log** (admins) lists every sign-in, booking and edit with the old and new value, who did it, and from which address. It cannot be edited from the app.
+- **Slack** acts with the role in `slack.role` / `SLACK_ROLE` (default `staff`). Set it to `viewer` to make Slack read-only.
+- **Your own password:** Settings → Your account.
+
+## 4. Using the app
+
+- **Sign in** with your username and password.
 - **Keyboard:**
   - **/** search, then **↑ ↓** and **Enter** to open a part
   - **+ / −** change stock on the open part, **Esc** closes it
@@ -77,7 +97,7 @@ Without `sync.remote_url`, the local app runs standalone as before.
 - **Misplaced spec lines** were reassigned: the belt specs by row order, and the trailing Mechanical specs to 44-80999 and A009673.
 - **Duplicate part numbers** were merged.
 
-## 4. Slack
+## 5. Slack
 
 1. Go to https://api.slack.com/apps → **Create New App → From an app manifest**, and paste **`slack-app-manifest.yml`**.
 2. **Basic Information → App-Level Tokens** → generate a token with the scope `connections:write`. That's `SLACK_APP_TOKEN`.
@@ -97,19 +117,19 @@ Without `sync.remote_url`, the local app runs standalone as before.
 ```
 You can also **@Spare Parts** in a channel or message the bot directly.
 
-## 5. Android app
+## 6. Android app
 
 - Install `SpareParts-arm64.apk`. To build it yourself, see `android/README.md`.
 - In the app's **Settings**, fill in:
   - **Server URL:** the Railway address
-  - **API key:** the site password
+  - **API key:** a device token from Accounts → Device token
   - **Your name**
 - **Scan** QR labels, manufacturer barcodes or DataMatrix codes, or tap **Read label** to read the text on a label.
 - Search and scanning still work offline, and stock changes are uploaded later.
 
 ## API
 
-Send the site password as the `X-Api-Key` header, or use the browser sign-in cookie. `X-User` (URL-encoded) names who made a change.
+Send a device token as the `X-Api-Key` header, or use the browser sign-in cookie. A device token may add `X-Actor` (or `user` in an adjustment) to name the person behind a change. Every endpoint checks the account's role.
 
 | | |
 |---|---|
@@ -121,10 +141,14 @@ Send the site password as the `X-Api-Key` header, or use the browser sign-in coo
 | `PATCH /api/parts/{pn}` | edit fields (optional `_ts` gives last-write-wins) |
 | `POST /api/parts`, `DELETE /api/parts/{pn}` | create / delete |
 | `POST /api/parts/{pn}/files` | upload a manual (header `X-Filename`) |
-| `GET /api/files`, `GET /files/<path>` | list / download manuals |
+| `GET /api/files`, `GET /files/<path>`, `DELETE /api/files?path=` | list / download / remove manuals |
 | `GET /api/movements[?after_id=]`, `/api/low`, `/api/stats` | reports |
 | `GET /api/export.csv`, `/api/export.json`, `POST /api/import` | export / import |
 | `GET /api/events` | live event stream |
 | `GET /api/sync/status`, `POST /api/sync/now` | local app sync state |
+| `GET /api/me`, `POST /api/me` | who am I / change my own password |
+| `GET/POST /api/users`, `PATCH/DELETE /api/users/{id}` | accounts (admin) |
+| `POST /api/users/{id}/password`, `POST /api/users/{id}/token` | reset a password / issue a device token |
+| `GET /api/audit` | audit log (admin) |
 
 **Backups:** the cloud database is `/data/inventory.db` on the Railway volume. Use `GET /api/export.json` for a quick copy.

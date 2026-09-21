@@ -11,6 +11,9 @@ Slash command (default /parts):
   /parts help
 Also: @mention the bot with a search, and buttons on each part (Take 1 / Add 1).
 Low-stock alerts go to slack.alert_channel when a part drops below its minimum.
+
+What Slack may do is set by slack.role in config.json / SLACK_ROLE (default "staff":
+search and book stock). Set it to "viewer" to make Slack read-only.
 """
 import re, threading
 
@@ -68,12 +71,15 @@ HELP = ("*Spare parts* – `{c} <search>` find parts · `{c} <part no>` details 
         "`{c} take <pn> [qty] [reason]` · `{c} add <pn> [qty] [reason]` · `{c} count <pn> <qty>` · "
         "`{c} where <pn>` · `{c} low`")
 
-def handle(store, text, user, base, command="/parts"):
-    """Return (response_text, blocks, public: bool). Pure function – easy to test."""
+def handle(store, text, user, base, command="/parts", perms=None):
+    """Return (response_text, blocks, public: bool). Pure function - easy to test."""
+    perms = perms if perms is not None else {"view", "adjust"}
     text = (text or "").strip()
     if not text or text.lower() in ("help", "?"):
         return HELP.format(c=command), None, False
     m = re.match(r"^(take|use|out|add|return|in|receive|count|set)\s+(\S+)(?:\s+(-?\d+(?:[.,]\d+)?))?(?:\s+(.*))?$", text, re.I)
+    if m and "adjust" not in perms:
+        return ":lock: Booking stock from Slack is turned off. Use the web app or the phone app.", None, False
     if m:
         verb, pn, qty, reason = m.group(1).lower(), m.group(2), m.group(3), m.group(4) or ""
         p = store.get(pn) or next(iter(store.lookup(pn)), None)
@@ -111,7 +117,7 @@ def handle(store, text, user, base, command="/parts"):
         return f"{hits[0]['pn']} {hits[0]['name']}", part_blocks(hits[0], base), False
     return f"{len(hits)} matches for {text}", list_blocks(f"{len(hits)} matches for “{text}”", hits[:15], base, max(0, len(hits) - 15)), False
 
-def start(store, cfg, public_url):
+def start(store, cfg, public_url, perms=None):
     from slack_bolt import App
     from slack_bolt.adapter.socket_mode import SocketModeHandler
     sc = cfg["slack"]
@@ -120,25 +126,27 @@ def start(store, cfg, public_url):
 
     @app.command(command)
     def on_command(ack, command: dict, respond):
-        txt, blocks, public = handle(store, command.get("text"), command["user_id"], public_url(), command["command"])
+        txt, blocks, public = handle(store, command.get("text"), command["user_id"], public_url(), command["command"], perms)
         ack()
         respond(text=txt, blocks=blocks, response_type="in_channel" if public else "ephemeral")
 
     @app.event("app_mention")
     def on_mention(event, say):
         q = re.sub(r"<@[^>]+>", "", event.get("text", "")).strip()
-        txt, blocks, _ = handle(store, q, event["user"], public_url(), command)
+        txt, blocks, _ = handle(store, q, event["user"], public_url(), command, perms)
         say(text=txt, blocks=blocks, thread_ts=event.get("thread_ts") or event["ts"])
 
     @app.event("message")
     def on_dm(event, say):
         if event.get("channel_type") == "im" and not event.get("bot_id") and not event.get("subtype"):
-            txt, blocks, _ = handle(store, event.get("text", ""), event["user"], public_url(), "")
+            txt, blocks, _ = handle(store, event.get("text", ""), event["user"], public_url(), "", perms)
             say(text=txt, blocks=blocks)
 
     def _btn(delta):
         def fn(ack, body, respond):
             ack()
+            if "adjust" not in (perms or set()):
+                return respond(text=":lock: Booking stock from Slack is turned off.", replace_original=False)
             pn = body["actions"][0]["value"]; user = body["user"]["id"]
             try:
                 p = store.adjust(pn, delta=delta, reason="Slack button", user=user, source="slack")

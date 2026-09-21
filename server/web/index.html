@@ -17,8 +17,11 @@
       <a href="#/activity" data-view="activity"><i>↻</i>Activity <kbd>3</kbd></a>
       <a href="#/labels" data-view="labels"><i>▣</i>QR labels <kbd>4</kbd></a>
       <a href="#/settings" data-view="settings"><i>⚙</i>Settings <kbd>5</kbd></a>
+      <a href="#/people" data-view="people" class="admin-only" hidden><i>◉</i>Accounts</a>
+      <a href="#/audit" data-view="audit" class="admin-only" hidden><i>≡</i>Audit log</a>
     </nav>
     <div class="side-foot">
+      <div class="whoami" id="whoami" hidden><b></b><small></small><a href="/logout" title="Sign out">⤴</a></div>
       <div id="liveDot" class="live"><span></span><em>Connecting…</em></div>
       <button id="syncState" class="sync" hidden><span></span><em></em></button>
       <button class="ghost sm" id="themeBtn" title="Toggle theme (T)">◐ Theme</button>
@@ -86,20 +89,47 @@
       <div class="label-pick" id="labelPick"></div>
     </section>
 
+    <section id="view-people" class="view" hidden>
+      <h2>Accounts</h2>
+      <p class="muted" id="peopleNote">Everyone who signs in. Roles decide what they may change; every change is recorded in the audit log with their name.</p>
+      <div class="row-btns" style="margin-bottom:12px">
+        <button class="primary" id="addUser">＋ New account</button>
+        <button class="ghost" id="addDevice">＋ Device token</button>
+      </div>
+      <div class="table-wrap"><table class="grid"><thead><tr><th>Account</th><th>Name</th><th>Role</th><th>Status</th><th>Last sign-in</th><th></th></tr></thead><tbody id="userRows"></tbody></table></div>
+      <div class="roles-legend" id="rolesLegend"></div>
+    </section>
+
+    <section id="view-audit" class="view" hidden>
+      <h2>Audit log</h2>
+      <p class="muted">Every sign-in, stock booking and edit, with who did it and when.</p>
+      <div class="chips" id="auditFilter" style="margin-bottom:10px">
+        <button class="chip on" data-af="changes">Changes</button>
+        <button class="chip" data-af="signin">Sign-ins</button>
+        <button class="chip" data-af="user">Accounts</button>
+        <button class="chip" data-af="">Everything</button>
+      </div>
+      <div class="table-wrap"><table class="grid"><thead><tr><th>When</th><th>Who</th><th>What</th><th>Item</th><th>Details</th></tr></thead><tbody id="auditRows"></tbody></table></div>
+    </section>
+
     <section id="view-settings" class="view" hidden>
       <h2>Settings</h2>
       <div class="cards">
         <div class="card">
-          <h3>You</h3>
-          <label>Your name (shown in activity)<input id="setUser" placeholder="e.g. Mousy"></label>
-          <div class="row-btns"><button class="primary" id="saveSettings">Save</button><a class="btn ghost" href="/logout">Sign out</a></div>
+          <h3>Your account</h3>
+          <dl class="kv" id="meInfo"></dl>
+          <h4 style="margin:14px 0 8px;font-size:13px;color:var(--muted)">Change password</h4>
+          <label>Current password<input id="pwCur" type="password" autocomplete="current-password"></label>
+          <label>New password (min 8)<input id="pwNew" type="password" autocomplete="new-password"></label>
+          <label>Repeat new password<input id="pwNew2" type="password" autocomplete="new-password"></label>
+          <div class="row-btns"><button class="primary" id="savePw">Change password</button><a class="btn ghost" href="/logout">Sign out</a></div>
         </div>
         <div class="card">
           <h3>Connect a phone</h3>
           <p class="muted">In the Android app, open Settings and enter this address as the server URL and the site password as the API key.</p>
           <div class="connect"><div id="connectQr"></div><code id="serverUrl"></code></div>
         </div>
-        <div class="card">
+        <div class="card" id="importCard">
           <h3>Import / export</h3>
           <p class="muted">Re-import an updated spare-part workbook (.ods or .xlsx). Stock counts, locations, minimums, notes and your own links are kept.</p>
           <input type="file" id="importFile" accept=".ods,.xlsx,.xls">

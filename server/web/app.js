@@ -7,7 +7,8 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, v); } catch {} },
 };
 const S = { parts: [], byPn: new Map(), version: 0, publicUrl: location.origin, cat: "", sel: -1, list: [],
-            open: null, view: "parts", labelSel: new Set() };
+            open: null, view: "parts", labelSel: new Set(), me: null, roles: [], canManageUsers: false };
+const can = p => !!S.me && S.me.perms.includes(p);
 const cookie = k => { const m = document.cookie.match(new RegExp("(?:^|; )" + k + "=([^;]*)")); return m ? decodeURIComponent(m[1]) : ""; };
 const userName = () => store.get("user", "") || cookie("sp_user");
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -18,7 +19,7 @@ const eur0 = n => "€" + Math.round(n || 0).toLocaleString("sv-SE");
 
 // ---------- API ----------
 async function api(path, opts = {}) {
-  const headers = { "Content-Type": "application/json", "X-User": encodeURIComponent(userName()) };
+  const headers = { "Content-Type": "application/json" };
   const key = store.get("apikey", "");
   if (key) headers["X-Api-Key"] = key;
   const r = await fetch("/api/" + path, { ...opts, headers: { ...headers, ...(opts.headers || {}) },
@@ -32,6 +33,19 @@ async function api(path, opts = {}) {
 function toast(msg, err) {
   const t = $("#toast"); t.textContent = msg; t.className = "show" + (err ? " err" : "");
   clearTimeout(t._h); t._h = setTimeout(() => t.className = "", 2600);
+}
+
+async function loadMe() {
+  const d = await api("me");
+  S.me = d.user; S.roles = d.roles || []; S.canManageUsers = d.can_manage_users;
+  const el = $("#whoami");
+  el.hidden = false;
+  el.innerHTML = `<div><b>${esc(S.me.name || S.me.username)}</b><small>${esc(S.me.role)}</small></div><a href="/logout" title="Sign out">⤴</a>`;
+  document.body.dataset.role = S.me.role;
+  $$(".admin-only").forEach(a => a.hidden = !can("users"));
+  $("#addBtn").hidden = !can("edit");
+  $("#importCard").hidden = !can("import");
+  return d;
 }
 
 async function load() {
@@ -197,24 +211,25 @@ function renderDetail(pn) {
     <div class="d-head">
       <div><div class="pn">${esc(p.pn)}</div><div class="d-name">${esc(p.name)}</div>
       <div class="sub">${esc(p.category)}${p.manufacturer ? " · " + esc(p.manufacturer) : ""}${p.model ? ` · <span class="pn">${esc(p.model)}</span>` : ""}${p.mpn ? ` · MPN <span class="pn">${esc(p.mpn)}</span>` : ""}</div></div>
-      <div style="display:flex;gap:6px"><button class="ghost sm" data-act="edit">Edit</button><button class="ghost sm" data-act="close" title="Esc">✕</button></div>
+      <div style="display:flex;gap:6px">${can("edit") ? '<button class="ghost sm" data-act="edit">Edit</button>' : ""}<button class="ghost sm" data-act="close" title="Esc">✕</button></div>
     </div>
     <div class="stock-card">
       <div class="stock-top">
         <div class="big" style="color:${color}">${num(oh)}<small>${esc(p.unit || "pcs")} on hand${mn ? ` · min ${num(mn)}` : ""}</small></div>
-        <div class="stepper"><button data-act="dec" title="Take one (−)">−</button><button data-act="inc" title="Add one (+)">+</button></div>
+        ${can("adjust") ? `<div class="stepper"><button data-act="dec" title="Take one (−)">−</button><button data-act="inc" title="Add one (+)">+</button></div>` : `<span class="muted">read only</span>`}
       </div>
       <div class="bar"><i style="width:${pct}%;background:${color}"></i></div>
       <div class="actions">
-        <button class="sm" data-act="take">Take…</button>
+        ${can("adjust") ? `<button class="sm" data-act="take">Take…</button>
         <button class="sm" data-act="return">Return…</button>
         ${p.qty_ordered ? `<button class="sm" data-act="receive">Receive order (+${num(p.qty_ordered)})</button>` : ""}
-        <button class="sm" data-act="count">Set count…</button>
-        <button class="sm" data-act="min">Min…</button>
+        <button class="sm" data-act="count">Set count…</button>` : ""}
+        ${can("edit_light") ? `<button class="sm" data-act="min">Min…</button>` : ""}
       </div>
     </div>
     <div class="d-sec"><h4>Location</h4>
-      <div class="inline-edit"><input id="locInput" value="${esc(p.location)}" placeholder="e.g. A-03-2"><button class="sm" data-act="saveloc">Save</button></div></div>
+      ${can("edit_light") ? `<div class="inline-edit"><input id="locInput" value="${esc(p.location)}" placeholder="e.g. A-03-2"><button class="sm" data-act="saveloc">Save</button></div>`
+        : `<div>${p.location ? `<span class="loc">${esc(p.location)}</span>` : '<span class="muted">not set</span>'}</div>`}</div>
     <div class="d-sec"><h4>Order & value</h4><dl class="kv">
       <dt>Unit price</dt><dd>${p.price != null ? "€ " + eur(p.price) : "—"}</dd>
       <dt>Stock value</dt><dd>${p.price != null ? "€ " + eur(oh * p.price) : "—"}</dd>
@@ -226,17 +241,19 @@ function renderDetail(pn) {
     ${p.specs?.length ? `<div class="d-sec"><h4>Specifications</h4><table class="specs">${p.specs.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join("")}</table></div>` : ""}
     <div class="d-sec"><h4>Manuals & documentation</h4><div class="links">
       ${links.map((l, i) => `<a href="${esc(l.url)}" target="_blank" rel="noopener">${l.file ? "📄" : "↗"} ${esc(l.title)}<span>${l.file ? Math.round(l.size / 1024) + " KB" : l.custom ? `<button class="ghost sm danger" data-act="dellink" data-i="${i - (p._files || []).length}">remove</button>` : new URL(l.url).hostname.replace("www.", "")}</span></a>`).join("") || '<p class="muted">No links yet.</p>'}
-      <button class="ghost sm" data-act="addlink">＋ Add link</button>
-      <button class="ghost sm" data-act="upload">⇪ Upload manual / photo</button>
+      ${can("edit_light") ? `<button class="ghost sm" data-act="addlink">＋ Add link</button>` : ""}
+      ${can("files") ? `<button class="ghost sm" data-act="upload">⇪ Upload manual / photo</button>` : ""}
     </div></div>
-    <div class="d-sec"><h4>Notes</h4><textarea id="notesInput" rows="3" style="width:100%" placeholder="Add a note…">${esc(p.notes)}</textarea>
-      <button class="sm" data-act="savenotes" style="margin-top:6px">Save notes</button></div>
+    <div class="d-sec"><h4>Notes</h4>${can("edit_light")
+      ? `<textarea id="notesInput" rows="3" style="width:100%" placeholder="Add a note…">${esc(p.notes)}</textarea>
+      <button class="sm" data-act="savenotes" style="margin-top:6px">Save notes</button>`
+      : `<div class="muted">${esc(p.notes) || "—"}</div>`}</div>
     <div class="d-sec"><h4>QR label</h4><div class="qrbox">${qrSvg(partUrl(p))}<div><div class="sub" style="word-break:break-all">${esc(partUrl(p))}</div>
       <button class="sm" data-act="print1" style="margin-top:8px">Print label</button></div></div></div>
     <div class="d-sec"><h4>History</h4><div class="hist">${p._hist ? (p._hist.length ? p._hist.map(h => `
       <div><span class="d ${h.delta >= 0 ? "pos" : "neg"}">${h.delta > 0 ? "+" : ""}${num(h.delta)}</span><span>→ ${num(h.after)}</span>
       <span class="muted">${esc(h.reason || "")}</span><span class="muted" style="margin-left:auto">${esc(h.user || h.source)} · ${when(h.ts)}</span></div>`).join("") : '<p class="muted">No movements yet.</p>') : '<p class="muted">Loading…</p>'}</div></div>
-    <div class="d-sec"><button class="ghost sm danger" data-act="delete">Delete part</button></div>`;
+    ${can("delete") ? `<div class="d-sec"><button class="ghost sm danger" data-act="delete">Delete part</button></div>` : ""}`;
 }
 function when(ts) {
   const d = new Date(ts * 1000), diff = (Date.now() - d) / 1000;
@@ -248,7 +265,7 @@ function when(ts) {
 
 async function adjust(pn, body, msg) {
   try {
-    const p = await api(`parts/${encodeURIComponent(pn)}/adjust`, { method: "POST", body: { ...body, user: userName() } });
+    const p = await api(`parts/${encodeURIComponent(pn)}/adjust`, { method: "POST", body });
     applyPart(p);
     toast(msg || `${pn}: ${num(p.on_hand)} on hand`);
     refreshHistory(pn);
@@ -340,12 +357,91 @@ function printLabels(pns) {
   setTimeout(() => window.print(), 50);
 }
 
+// ---------- accounts ----------
+async function renderPeople() {
+  if (!can("users")) return;
+  const users = await api("users");
+  const fmt = t => t ? when(t) : "never";
+  $("#userRows").innerHTML = users.map(u => `
+    <tr data-uid="${u.id}">
+      <td class="pn">${esc(u.username)}${u.kind === "device" ? ' <span class="cat">device</span>' : ""}</td>
+      <td>${esc(u.name || "")}</td>
+      <td style="text-transform:capitalize">${esc(u.role)}</td>
+      <td>${u.active ? (u.must_change ? '<span class="state new">must set password</span>' : '<span class="state on">active</span>') : '<span class="state off">disabled</span>'}</td>
+      <td>${u.kind === "device" ? (u.has_token ? "token issued" : "no token") : fmt(u.last_login)}</td>
+      <td class="rowacts">
+        <button class="ghost sm" data-uact="edit">Edit</button>
+        ${u.kind === "person" ? '<button class="ghost sm" data-uact="pw">Reset password</button>' : '<button class="ghost sm" data-uact="token">New token</button>'}
+        <button class="ghost sm" data-uact="toggle">${u.active ? "Disable" : "Enable"}</button>
+        <button class="ghost sm danger" data-uact="del">Delete</button>
+      </td></tr>`).join("");
+  $("#rolesLegend").innerHTML = S.roles.map(r => `<div><b>${esc(r.id)}</b><br>${esc(r.text)}</div>`).join("");
+  $("#peopleNote").textContent = S.canManageUsers
+    ? "Everyone who signs in. Roles decide what they may change; every change is recorded in the audit log with their name."
+    : "This is the local copy — accounts are managed in the cloud app and shown here read-only.";
+  S.users = users;
+}
+
+function userDialog(u) {
+  const isNew = !u;
+  const roles = S.roles.map(r => `<option value="${r.id}" ${u && u.role === r.id ? "selected" : ""}>${esc(r.id)} – ${esc(r.text)}</option>`).join("");
+  dialog(`<h3>${isNew ? "New account" : "Edit " + esc(u.username)}</h3>
+    ${isNew ? `<label>Username<input name="username" required pattern="[A-Za-z0-9._-]{2,32}" placeholder="e.g. anna"></label>` : ""}
+    <label>Full name<input name="name" value="${esc(u ? u.name : "")}" placeholder="Shown in the log"></label>
+    <label>Role<select name="role">${roles}</select></label>
+    ${isNew ? `<label>Temporary password<input name="password" value="${randomPassword()}" minlength="8" required></label>
+      <p class="muted" style="font-size:12px;margin:0">Give them this password; the app asks them to choose their own at first sign-in.</p>` : ""}`,
+    d => {
+      if (isNew) {
+        api("users", { method: "POST", body: { username: d.username, name: d.name, role: d.role, password: d.password } })
+          .then(() => { toast(`Account ${d.username} created`); renderPeople(); })
+          .catch(e => toast(e.message, true));
+      } else {
+        api("users/" + u.id, { method: "PATCH", body: { name: d.name, role: d.role } })
+          .then(() => { toast("Saved"); renderPeople(); })
+          .catch(e => toast(e.message, true));
+      }
+    });
+}
+
+function randomPassword() {
+  const w = ["anchor", "copper", "falcon", "granite", "harbor", "lantern", "meadow", "quartz", "summit", "timber", "walnut", "zephyr"];
+  const p = n => w[Math.floor(Math.random() * w.length)];
+  return `${p()}-${p()}-${100 + Math.floor(Math.random() * 900)}`;
+}
+
+function showSecret(title, value, note) {
+  dialog(`<h3>${esc(title)}</h3><p class="muted" style="font-size:13px">${esc(note)}</p>
+    <div class="tokenbox">${esc(value)}</div>`, () => {});
+  navigator.clipboard?.writeText(value).then(() => toast("Copied to clipboard"), () => {});
+}
+
+async function renderAudit() {
+  if (!can("users")) return;
+  S.audit = await api("audit?limit=500");
+  drawAudit();
+}
+
+function drawAudit() {
+  const f = S.auditFilter ?? "changes";
+  const keep = r => f === "" ? true
+    : f === "changes" ? /^(part|file|import|export|seed|stock)/.test(r.action)
+    : f === "signin" ? r.action.startsWith("signin") || r.action === "signout"
+    : r.action.startsWith("user.");
+  const rows = (S.audit || []).filter(keep);
+  $("#auditRows").innerHTML = rows.map(r => `<tr>
+    <td class="sub">${when(r.ts)}</td><td class="pn">${esc(r.username || "—")}</td>
+    <td>${esc(r.action)}</td><td class="pn">${esc(r.target || "")}</td>
+    <td class="sub">${esc(r.detail || "")}${r.ip ? ` <span class="muted">· ${esc(r.ip)}</span>` : ""}</td></tr>`).join("")
+    || '<tr><td colspan="5" class="empty">Nothing here.</td></tr>';
+}
+
 // ---------- routing ----------
 function route() {
   const h = location.hash.replace(/^#\/?/, "");
   let pn = null, view = "parts";
   if (h.startsWith("p/")) pn = decodeURIComponent(h.slice(2));
-  else if (["low", "activity", "labels", "settings"].includes(h)) view = h;
+  else if (["low", "activity", "labels", "settings", "people", "audit"].includes(h)) view = h;
   if (location.pathname.startsWith("/p/")) { pn = decodeURIComponent(location.pathname.slice(3)); history.replaceState(null, "", "/#/p/" + encodeURIComponent(pn)); }
   if (pn) { openPart(pn, false); return; }
   S.view = view;
@@ -355,9 +451,14 @@ function route() {
   if (view === "activity") renderActivity();
   if (view === "labels") renderLabels();
   if (view === "settings") renderSettings();
+  if (view === "people") renderPeople().catch(e => toast(e.message, true));
+  if (view === "audit") renderAudit().catch(e => toast(e.message, true));
 }
 function renderSettings() {
-  $("#setUser").value = userName();
+  const m = S.me || {};
+  $("#meInfo").innerHTML = `<dt>Username</dt><dd class="pn">${esc(m.username || "")}</dd>
+    <dt>Name</dt><dd>${esc(m.name || "")}</dd>
+    <dt>Role</dt><dd style="text-transform:capitalize">${esc(m.role || "")} <span class="muted">– ${esc((S.roles.find(r => r.id === m.role) || {}).text || "")}</span></dd>`;
   $("#serverUrl").textContent = S.publicUrl;
   $("#connectQr").innerHTML = qrSvg(S.publicUrl, 4);
   const k = store.get("apikey", "");
@@ -452,6 +553,41 @@ function bind() {
   });
   $("#detail").addEventListener("keydown", e => { if (e.key === "Enter" && e.target.id === "locInput") $("[data-act=saveloc]").click(); });
   $("#addBtn").onclick = () => editDialog(null);
+  $("#addUser").onclick = () => userDialog(null);
+  $("#addDevice").onclick = () => dialog(`<h3>New device token</h3>
+      <p class="muted" style="font-size:13px;margin:0 0 12px">For a phone or the site PC. It gets its own token instead of a password; bookings made with it are logged under the person's name when the app sends one.</p>
+      <label>Name<input name="username" required pattern="[A-Za-z0-9._-]{2,32}" placeholder="e.g. phone-warehouse"></label>
+      <label>Role<select name="role">${S.roles.map(r => `<option value="${r.id}" ${r.id === "staff" ? "selected" : ""}>${r.id} – ${r.text}</option>`).join("")}</select></label>`,
+    d => api("users", { method: "POST", body: { username: d.username, name: d.username, role: d.role, kind: "device" } })
+      .then(r => { renderPeople(); showSecret("Device token for " + d.username, r.token, "Paste this into the app's API key field. It is shown only now."); })
+      .catch(e => toast(e.message, true)));
+  $("#auditFilter").addEventListener("click", e => {
+    const b = e.target.closest(".chip"); if (!b) return;
+    S.auditFilter = b.dataset.af;
+    $$("#auditFilter .chip").forEach(c => c.classList.toggle("on", c === b));
+    drawAudit();
+  });
+  $("#userRows").addEventListener("click", e => {
+    const b = e.target.closest("[data-uact]"); if (!b) return;
+    const uid = +b.closest("tr").dataset.uid;
+    const u = (S.users || []).find(x => x.id === uid); if (!u) return;
+    const act = b.dataset.uact;
+    if (act === "edit") return userDialog(u);
+    if (act === "pw") return dialog(`<h3>Reset password for ${esc(u.username)}</h3>
+        <label>New temporary password<input name="password" value="${randomPassword()}" minlength="8" required></label>
+        <p class="muted" style="font-size:12px;margin:0">They must choose their own password at the next sign-in, and any open session is signed out.</p>`,
+      d => api(`users/${uid}/password`, { method: "POST", body: { password: d.password } })
+        .then(r => { renderPeople(); showSecret("Temporary password for " + u.username, r.password, "Give this to them in person; it is shown only now."); })
+        .catch(e => toast(e.message, true)));
+    if (act === "token") return dialog(`<h3>New token for ${esc(u.username)}</h3><p class="muted" style="font-size:13px">The old token stops working straight away.</p>`,
+      () => api(`users/${uid}/token`, { method: "POST" })
+        .then(r => { renderPeople(); showSecret("Device token for " + u.username, r.token, "Paste this into the app's API key field. It is shown only now."); })
+        .catch(e => toast(e.message, true)));
+    if (act === "toggle") return api("users/" + uid, { method: "PATCH", body: { active: !u.active } })
+      .then(() => { toast(u.active ? "Disabled" : "Enabled"); renderPeople(); }).catch(e => toast(e.message, true));
+    if (act === "del") return dialog(`<h3>Delete ${esc(u.username)}?</h3><p class="muted">Their past bookings stay in the history and the audit log.</p>`,
+      () => api("users/" + uid, { method: "DELETE" }).then(() => { toast("Deleted"); renderPeople(); }).catch(e => toast(e.message, true)));
+  });
   $("#themeBtn").onclick = toggleTheme;
   $("#syncState").onclick = () => api("sync/now", { method: "POST" }).then(() => toast("Syncing…")).catch(e => toast(e.message, true));
   setInterval(() => api("sync/status").then(showSync).catch(() => {}), 15000);
@@ -465,7 +601,13 @@ function bind() {
   $("#labelPrint").onclick = () => S.labelSel.size ? printLabels([...S.labelSel]) : toast("Select some parts first", true);
 
   // settings
-  $("#saveSettings").onclick = () => { store.set("user", $("#setUser").value.trim()); toast("Saved"); };
+  $("#savePw").onclick = async () => {
+    const cur = $("#pwCur").value, nw = $("#pwNew").value;
+    if (nw !== $("#pwNew2").value) return toast("The two new passwords do not match", true);
+    if (nw.length < 8) return toast("Password must be at least 8 characters", true);
+    try { await api("me", { method: "POST", body: { current: cur, new: nw } }); toast("Password changed"); $("#pwCur").value = $("#pwNew").value = $("#pwNew2").value = ""; }
+    catch (e) { toast(e.message, true); }
+  };
   $("#importFile").onchange = async e => {
     const f = e.target.files[0]; if (!f) return;
     toast("Importing…");
@@ -499,9 +641,9 @@ function bind() {
     if (inSearch) return;
     if (S.open && (e.key === "+" || e.key === "=")) return $("[data-act=inc]").click();
     if (S.open && (e.key === "-" || e.key === "_")) return $("[data-act=dec]").click();
-    const views = { 1: "#/", 2: "#/low", 3: "#/activity", 4: "#/labels", 5: "#/settings" };
+    const views = { 1: "#/", 2: "#/low", 3: "#/activity", 4: "#/labels", 5: "#/settings", 6: can("users") ? "#/people" : null, 7: can("users") ? "#/audit" : null };
     if (views[e.key]) location.hash = views[e.key];
-    if (e.key.toLowerCase() === "n") { e.preventDefault(); editDialog(null); }
+    if (e.key.toLowerCase() === "n" && can("edit")) { e.preventDefault(); editDialog(null); }
     if (e.key.toLowerCase() === "t") toggleTheme();
   });
 }
@@ -512,5 +654,5 @@ function toggleTheme() {
 
 document.documentElement.dataset.theme = store.get("theme", matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
 bind();
-load().then(() => { route(); connectLive(); }).catch(e => { if (e.message !== "auth") toast("Could not load: " + e.message, true); route(); });
+loadMe().then(load).then(() => { route(); connectLive(); }).catch(e => { if (e.message !== "auth") toast("Could not load: " + e.message, true); route(); });
 })();
