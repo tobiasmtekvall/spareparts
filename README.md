@@ -117,6 +117,8 @@ Everyone has their own account, so every booking and edit is recorded against a 
 ```
 You can also **@Spare Parts** in a channel or message the bot directly.
 
+Stock changes made from Slack are recorded under the person's Slack display name (as `slack:Name`), both in the part's history and in the audit log.
+
 ## 6. Android app
 
 - Install `apk/SpareParts-arm64.apk` (version 2 or newer — it has sign-in). To build it yourself, see `android/README.md`.

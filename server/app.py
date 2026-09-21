@@ -744,7 +744,8 @@ def main():
         try:
             import slack_bot
             from accounts import perms_for
-            slack_bot.start(STORE, CFG, public_url, perms_for(slack.get("role") or "staff"))
+            slack_bot.start(STORE, CFG, public_url, perms_for(slack.get("role") or "staff"),
+                            log_action=lambda u, a, t, d: ACC.log(u, a, t, d, source="slack"))
             print(f"Slack role: {slack.get('role') or 'staff'}")
         except Exception as e:
             print("Slack bot not started:", e)

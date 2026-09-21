@@ -71,9 +71,13 @@ HELP = ("*Spare parts* – `{c} <search>` find parts · `{c} <part no>` details 
         "`{c} take <pn> [qty] [reason]` · `{c} add <pn> [qty] [reason]` · `{c} count <pn> <qty>` · "
         "`{c} where <pn>` · `{c} low`")
 
-def handle(store, text, user, base, command="/parts", perms=None):
-    """Return (response_text, blocks, public: bool). Pure function - easy to test."""
+def handle(store, text, user, base, command="/parts", perms=None, name=None):
+    """Return (response_text, blocks, public: bool). Pure function - easy to test.
+
+    `user` is the Slack user id (used to @mention them); `name` is their display
+    name, which is what gets written into the stock history and the audit log."""
     perms = perms if perms is not None else {"view", "adjust"}
+    who = name or user
     text = (text or "").strip()
     if not text or text.lower() in ("help", "?"):
         return HELP.format(c=command), None, False
@@ -89,13 +93,13 @@ def handle(store, text, user, base, command="/parts", perms=None):
         try:
             if verb in ("count", "set"):
                 if qty is None: return "Usage: `count <pn> <qty>`", None, False
-                p = store.adjust(p["pn"], set_to=q, reason=reason or "Stock count", user=user, source="slack")
+                p = store.adjust(p["pn"], set_to=q, reason=reason or "Stock count", user=who, source="slack")
                 verb_txt = f"counted *{_fmt(q)}*"
             elif verb in ("take", "use", "out"):
-                p = store.adjust(p["pn"], delta=-q, reason=reason, user=user, source="slack")
+                p = store.adjust(p["pn"], delta=-q, reason=reason, user=who, source="slack")
                 verb_txt = f"took *{_fmt(q)}*"
             else:
-                p = store.adjust(p["pn"], delta=q, reason=reason, user=user, source="slack")
+                p = store.adjust(p["pn"], delta=q, reason=reason, user=who, source="slack")
                 verb_txt = f"added *{_fmt(q)}*"
         except ValueError as e:
             return f":warning: {e}", None, False
@@ -117,29 +121,50 @@ def handle(store, text, user, base, command="/parts", perms=None):
         return f"{hits[0]['pn']} {hits[0]['name']}", part_blocks(hits[0], base), False
     return f"{len(hits)} matches for {text}", list_blocks(f"{len(hits)} matches for “{text}”", hits[:15], base, max(0, len(hits) - 15)), False
 
-def start(store, cfg, public_url, perms=None):
+def start(store, cfg, public_url, perms=None, log_action=None):
     from slack_bolt import App
     from slack_bolt.adapter.socket_mode import SocketModeHandler
     sc = cfg["slack"]
     command = sc.get("command") or "/parts"
     app = App(token=sc["bot_token"], token_verification_enabled=False)
+    names = {}
+
+    def display_name(uid):
+        """Slack ids are meaningless in a stock history - look the person up once."""
+        if uid not in names:
+            try:
+                info = app.client.users_info(user=uid)["user"]
+                names[uid] = "slack:" + (info.get("profile", {}).get("display_name")
+                                         or info.get("real_name") or uid)
+            except Exception:
+                names[uid] = "slack:" + uid
+        return names[uid]
+
+    def record(uid, action, target, detail):
+        if log_action:
+            try: log_action(display_name(uid), action, target, detail)
+            except Exception as e: print("slack audit error:", e)
 
     @app.command(command)
     def on_command(ack, command: dict, respond):
-        txt, blocks, public = handle(store, command.get("text"), command["user_id"], public_url(), command["command"], perms)
+        txt, blocks, public = handle(store, command.get("text"), command["user_id"], public_url(),
+                                     command["command"], perms, display_name(command["user_id"]))
         ack()
+        if public:                      # a stock change was made
+            record(command["user_id"], "stock", "", re.sub(r"[*<>@]", "", txt)[:300])
         respond(text=txt, blocks=blocks, response_type="in_channel" if public else "ephemeral")
 
     @app.event("app_mention")
     def on_mention(event, say):
         q = re.sub(r"<@[^>]+>", "", event.get("text", "")).strip()
-        txt, blocks, _ = handle(store, q, event["user"], public_url(), command, perms)
+        txt, blocks, _ = handle(store, q, event["user"], public_url(), command, perms, display_name(event["user"]))
         say(text=txt, blocks=blocks, thread_ts=event.get("thread_ts") or event["ts"])
 
     @app.event("message")
     def on_dm(event, say):
         if event.get("channel_type") == "im" and not event.get("bot_id") and not event.get("subtype"):
-            txt, blocks, _ = handle(store, event.get("text", ""), event["user"], public_url(), "", perms)
+            txt, blocks, _ = handle(store, event.get("text", ""), event["user"], public_url(), "", perms,
+                                    display_name(event["user"]))
             say(text=txt, blocks=blocks)
 
     def _btn(delta):
@@ -149,7 +174,8 @@ def start(store, cfg, public_url, perms=None):
                 return respond(text=":lock: Booking stock from Slack is turned off.", replace_original=False)
             pn = body["actions"][0]["value"]; user = body["user"]["id"]
             try:
-                p = store.adjust(pn, delta=delta, reason="Slack button", user=user, source="slack")
+                p = store.adjust(pn, delta=delta, reason="Slack button", user=display_name(user), source="slack")
+                record(user, "stock", pn, f"change {delta:+g} -> {_fmt(p['on_hand'])} (Slack button)")
                 respond(text=f"<@{user}> {'took' if delta < 0 else 'added'} 1 × {pn} → {_fmt(p['on_hand'])} left",
                         response_type="in_channel", replace_original=False)
             except ValueError as e:
