@@ -585,10 +585,13 @@ class Handler(BaseHTTPRequestHandler):
             if len(seg) == 3 and seg[2] == "adjust" and method == "POST":
                 self._require(user, "adjust")
                 b = self._json()
+                by = (b.get("user") or actor) if user["kind"] == "device" else who
                 p = STORE.adjust(pn, delta=b.get("delta"), set_to=b.get("set"), reason=b.get("reason", ""),
-                                 user=(b.get("user") or actor) if user["kind"] == "device" else who,
-                                 source=b.get("source", "web"),
+                                 user=by, source=b.get("source", "web"),
                                  client_id=b.get("client_id"), ts=b.get("ts"))
+                ACC.log(by, "stock", pn, f"{'set to' if b.get('set') is not None else 'change'} "
+                        f"{b.get('set') if b.get('set') is not None else b.get('delta')} -> {p['on_hand']:g}"
+                        + (f" ({b['reason']})" if b.get("reason") else ""), source=b.get("source", "web"), ip=self._client_ip())
                 return self._send(200, p)
             if len(seg) == 3 and seg[2] == "movements":
                 return self._send(200, STORE.movements(pn, int(one("limit", "50"))))
@@ -635,10 +638,14 @@ class Handler(BaseHTTPRequestHandler):
             results = []
             for b in self._json().get("items", []):
                 try:
-                    STORE.adjust(b["pn"], delta=b.get("delta"), set_to=b.get("set"), reason=b.get("reason", ""),
-                                 user=(b.get("user") or actor) if user["kind"] == "device" else who,
-                                 source=b.get("source", "android"),
-                                 client_id=b.get("client_id"), ts=b.get("ts"))
+                    by = (b.get("user") or actor) if user["kind"] == "device" else who
+                    p = STORE.adjust(b["pn"], delta=b.get("delta"), set_to=b.get("set"), reason=b.get("reason", ""),
+                                     user=by, source=b.get("source", "android"),
+                                     client_id=b.get("client_id"), ts=b.get("ts"))
+                    ACC.log(by, "stock", b["pn"], f"{'set to' if b.get('set') is not None else 'change'} "
+                            f"{b.get('set') if b.get('set') is not None else b.get('delta')} -> {p['on_hand']:g}"
+                            + (f" ({b['reason']})" if b.get("reason") else ""),
+                            source=b.get("source", "android"), ip=self._client_ip())
                     results.append({"id": b.get("id"), "ok": True})
                 except Exception as e:
                     results.append({"id": b.get("id"), "ok": False, "error": str(e)})
